@@ -279,6 +279,20 @@ export default function Home() {
     }
   }, []);
 
+  // Listen for native OpenWork browser panel open events from Electron
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const api = (window as any).electronAPI?.browser;
+      if (api?.onOpenPanel) {
+        const cleanup = api.onOpenPanel((data: any) => {
+          if (data?.url) setBrowserUrl(data.url);
+          setIsBrowserPanelOpen(true);
+        });
+        return cleanup;
+      }
+    }
+  }, []);
+
   // Remove any legacy built-in connector cards that may still be held in an open session.
   useEffect(() => {
     setSessions((prev) => {

@@ -153,6 +153,50 @@ const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'shell_command',
+      description: 'Run a shell/PowerShell command directly on the local machine (OpenWork terminal style) and get stdout/stderr output.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'The command to execute in PowerShell/terminal' },
+          cwd: { type: 'string', description: 'Optional directory path to execute the command in' },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'workspace_read_file',
+      description: 'Read the contents of a local file from the machine/workspace.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'The absolute or relative file path to read' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'workspace_write_file',
+      description: 'Create or update a local file on the machine/workspace with new content.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'The file path to write to' },
+          content: { type: 'string', description: 'The text content to write into the file' },
+        },
+        required: ['path', 'content'],
+      },
+    },
+  },
 ];
 
 
@@ -690,6 +734,81 @@ async function runAgentTool(
       }
     }
 
+    // OpenWork Local Desktop Bridge priority execution (Electron on port 48080)
+    if (
+      name.startsWith('browser_') ||
+      name.startsWith('claude_') ||
+      name === 'shell_command' ||
+      name === 'workspace_read_file' ||
+      name === 'workspace_write_file'
+    ) {
+      try {
+        const bridgeRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, args }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (bridgeRes.ok) {
+          const bridgeData = await bridgeRes.json();
+          if (bridgeData.ok) {
+            return typeof bridgeData.result === 'string'
+              ? bridgeData.result
+              : JSON.stringify(bridgeData.result);
+          }
+        }
+      } catch (err) {
+        // Fall through to in-process execution fallback
+      }
+    }
+
+    // Shell Command Execution (OpenWork Local Terminal Style)
+    if (name === 'shell_command') {
+      try {
+        const { exec } = await import('child_process');
+        const cmd = String(args?.command || '').trim();
+        const cwd = args?.cwd || process.cwd();
+        return await new Promise<string>((resolve) => {
+          exec(cmd, { cwd, timeout: 45000 }, (error, stdout, stderr) => {
+            if (error) {
+              resolve(`Command failed (code ${error.code || 1}):\n${stderr || error.message}\n${stdout}`);
+            } else {
+              resolve(stdout || stderr || 'Command executed successfully.');
+            }
+          });
+        });
+      } catch (e: any) {
+        return `Shell execution error: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    // Workspace File Reading
+    if (name === 'workspace_read_file') {
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const target = path.resolve(String(args?.path || ''));
+        if (!fs.existsSync(target)) return `File not found: ${target}`;
+        return fs.readFileSync(target, 'utf8');
+      } catch (e: any) {
+        return `File read error: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    // Workspace File Writing
+    if (name === 'workspace_write_file') {
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const target = path.resolve(String(args?.path || ''));
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, String(args?.content || ''), 'utf8');
+        return `Successfully wrote file: ${target}`;
+      } catch (e: any) {
+        return `File write error: ${e?.message || 'unknown error'}`;
+      }
+    }
+
     // Local Claude Desktop MCP Tools (e.g. claude_toonpop_connectors_*)
     if (name.startsWith('claude_')) {
       try {
@@ -724,23 +843,30 @@ AVAILABLE CAPABILITIES & APP FEATURES:
    - browser_screenshot: Take a visual capture of the active browser view.
    * Use the browser whenever the user asks to open websites, search on Google/YouTube in the browser, check pages, click links, or interact live!
 
-2. LIVE WEB INTELLIGENCE:
+2. LOCAL TERMINAL & WORKSPACE FILESYSTEM (OpenWork Engine):
+   - shell_command: Execute shell/PowerShell/bash commands directly on the user's machine with real stdout/stderr.
+   - workspace_read_file: Read any local file or source code file on the user's computer.
+   - workspace_write_file: Write, edit, or create files on the user's computer.
+   * Use these whenever the user asks to run commands, build code, install packages, check directories, or edit local files!
+
+3. LIVE WEB INTELLIGENCE:
    - web_search: Search DuckDuckGo/live web for current news, facts, documentation, or answers.
    - web_fetch: Fetch readable text and documentation from any public URL.
 
-3. GITHUB & CODE:
+4. GITHUB & CODE:
    - github_lookup: Retrieve real repository statistics, branches, open issues, and recent commits.
    - Connected GitHub MCP: Read, search, and manage repository files when connected.
 
-4. LOCAL CLAUDE DESKTOP & TOONPOP MCP TOOLS:
+5. LOCAL CLAUDE DESKTOP & TOONPOP MCP TOOLS:
    - Local tools configured in Claude Desktop (e.g. ToonPop video pipeline, YouTube posting, Instagram posting, Telegram bot, connector checks) are automatically available and can be called directly.
 
-5. COMMUNICATION:
+6. COMMUNICATION:
    - read_inbox: Check recent incoming emails from the user's connected mailbox.
    - send_email: Send real emails via connected SMTP.
 
 DIRECTIVES:
 - Genuinely understand user requests: If the user asks to browse, visit a website, search on Google, or check an online service, use the embedded browser tools or web search.
+- If the user asks to run commands, edit files, or execute local scripts, use shell_command and workspace file tools.
 - For conversational questions, writing, or coding, answer directly with clear, authoritative Markdown.
 - Deliver helpful, proactive, and direct answers without outputting internal planning notes or raw JSON in final replies.`,
 };

@@ -72,7 +72,26 @@ async function sendCdpCommand(wsUrl: string, method: string, params: any = {}): 
   });
 }
 
+async function callLocalBridge(toolName: string, args: any = {}): Promise<any | null> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: toolName, args }),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return data.result;
+    }
+  } catch {}
+  return null;
+}
+
 export async function browserNavigate(url: string): Promise<string> {
+  const local = await callLocalBridge('browser_navigate', { url });
+  if (local) return typeof local === 'string' ? local : JSON.stringify(local);
+
   const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
   const wsUrl = await getBrowserWsUrl();
   if (wsUrl) {
@@ -87,6 +106,8 @@ export async function browserNavigate(url: string): Promise<string> {
 }
 
 export async function browserObserve(): Promise<any> {
+  const local = await callLocalBridge('browser_observe', {});
+  if (local) return local;
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) {
     return {
@@ -134,6 +155,9 @@ export async function browserObserve(): Promise<any> {
 }
 
 export async function browserClick(ref?: string, selector?: string): Promise<string> {
+  const local = await callLocalBridge('browser_click', { ref, selector });
+  if (local) return typeof local === 'string' ? local : JSON.stringify(local);
+
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) return 'Browser view not available for click.';
 
@@ -166,6 +190,9 @@ export async function browserClick(ref?: string, selector?: string): Promise<str
 }
 
 export async function browserType(text: string, ref?: string, selector?: string): Promise<string> {
+  const local = await callLocalBridge('browser_type', { text, ref, selector });
+  if (local) return typeof local === 'string' ? local : JSON.stringify(local);
+
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) return 'Browser view not available for typing.';
 
@@ -201,6 +228,9 @@ export async function browserType(text: string, ref?: string, selector?: string)
 }
 
 export async function browserScreenshot(): Promise<string> {
+  const local = await callLocalBridge('browser_screenshot', {});
+  if (local) return typeof local === 'string' ? local : JSON.stringify(local);
+
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) return 'Browser view not active for screenshot.';
 
