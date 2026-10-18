@@ -2111,6 +2111,20 @@ export async function POST(req: NextRequest) {
     for (const tool of claudeDesktopTools) {
       allToolsMap.set(tool.function.name, tool);
     }
+
+    // Dynamic discovery of ANY connector/tool registered on the Local Bridge
+    try {
+      const bridgeToolsRes = await fetch('http://127.0.0.1:48080/api/tools', { signal: AbortSignal.timeout(2000) });
+      if (bridgeToolsRes.ok) {
+        const bridgeData = await bridgeToolsRes.json();
+        if (Array.isArray(bridgeData?.tools)) {
+          for (const bTool of bridgeData.tools) {
+            allToolsMap.set(bTool.function.name, bTool);
+          }
+        }
+      }
+    } catch {}
+
     for (const tool of (focusedCandidateTools.length ? focusedCandidateTools : remoteMcpTools)) {
       const name = String(tool.originalName || tool.function?.name || '').trim();
       allToolsMap.set(name, tool);
