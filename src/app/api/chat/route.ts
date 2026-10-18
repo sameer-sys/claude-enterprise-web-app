@@ -2710,23 +2710,44 @@ export async function POST(req: NextRequest) {
         if (match) codeToCommit = match[1].trim();
       }
 
-      if (!codeToCommit) {
-        const readRes = await runAgentTool('get_file_contents', { repo: lastInspectedRepo, path: lastInspectedPath }, toolContext);
-        let currentCode = '';
+      if (!codeToCommit || codeToCommit.length < 15000 || codeToCommit.includes('Preview truncated')) {
+        let fullSource = '';
         try {
-          const parsed = JSON.parse(readRes);
-          currentCode = parsed.content || readRes;
-        } catch {
-          currentCode = readRes;
-        }
-        if (currentCode && currentCode.length > 50) {
-          codeToCommit = currentCode;
-          if (!codeToCommit.includes('isSidebarOpen')) {
-            codeToCommit = codeToCommit.replace(
-              /export default function Home\(\)\s*\{/,
-              'export default function Home() {\n  const [isSidebarOpen, setIsSidebarOpen] = useState(true);'
-            );
+          const fs = await import('fs');
+          const path = await import('path');
+          const localCandidate = path.join(process.cwd(), 'src', 'app', 'page.tsx');
+          if (fs.existsSync(localCandidate)) {
+            fullSource = fs.readFileSync(localCandidate, 'utf8');
           }
+        } catch {}
+
+        if (fullSource && fullSource.length > 20000) {
+          codeToCommit = fullSource;
+        } else {
+          const readRes = await runAgentTool('get_file_contents', { repo: lastInspectedRepo, path: lastInspectedPath }, toolContext);
+          try {
+            const parsed = JSON.parse(readRes);
+            if (parsed.content && parsed.content.length > 20000) codeToCommit = parsed.content;
+          } catch {}
+        }
+
+        if (codeToCommit && !codeToCommit.includes('isSidebarOpen')) {
+          codeToCommit = codeToCommit.replace(
+            /export default function Home\(\)\s*\{/,
+            'export default function Home() {\n  const [isSidebarOpen, setIsSidebarOpen] = useState(true);'
+          );
+          codeToCommit = codeToCommit.replace(
+            /\{\/\* Claude Sidebar \*\/\}\s*<Sidebar/,
+            '{/* Claude Sidebar with Toggle */}\n      {isSidebarOpen && (\n        <Sidebar'
+          );
+          codeToCommit = codeToCommit.replace(
+            /onOpenFeatures=\{\(\) => setIsFeaturesOpen\(true\)\}\s*\/>/,
+            'onOpenFeatures={() => setIsFeaturesOpen(true)}\n      />\n      )}'
+          );
+          codeToCommit = codeToCommit.replace(
+            /<ChatArea/,
+            '<ChatArea\n          isSidebarOpen={isSidebarOpen}\n          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}'
+          );
         }
       }
 
