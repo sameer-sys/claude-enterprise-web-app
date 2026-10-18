@@ -118,7 +118,7 @@ export async function runBrowserTask(
     const lower = task.toLowerCase();
 
     // YouTube Playlist Task Automator (deterministic human-speed flow)
-    if (lower.includes('youtube') || lower.includes('playlist') || lower.includes('yt')) {
+    if (lower.includes('youtube') || lower.includes('playlist') || /\byt\b/i.test(lower)) {
       return await executeYouTubeTask(page, task, emitStep);
     }
 

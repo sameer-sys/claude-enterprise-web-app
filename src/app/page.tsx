@@ -732,12 +732,12 @@ export default function Home() {
       lowerText.startsWith('open ') ||
       lowerText.startsWith('play ') ||
       lowerText.includes('youtube') ||
-      lowerText.includes('yt') ||
+      /\byt\b/i.test(lowerText) ||
       lowerText.includes('browse ') ||
       /https?:\/\//i.test(text)
     ) {
       let target = 'https://www.google.com';
-      if (lowerText.includes('youtube') || lowerText.includes('yt')) {
+      if (lowerText.includes('youtube') || /\byt\b/i.test(lowerText)) {
         const cleanQuery = text
           .replace(/^(?:hey\s+)?(?:open|play|search\s+for|search)\s+(?:in\s+|on\s+)?(?:youtube|yt)\s*/i, '')
           .replace(/(?:in|on)\s+(?:youtube|yt)\s*$/i, '')
