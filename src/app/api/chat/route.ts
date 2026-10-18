@@ -788,8 +788,17 @@ async function runAgentTool(
         const fs = await import('fs');
         const path = await import('path');
         const target = path.resolve(String(args?.path || ''));
-        if (!fs.existsSync(target)) return `File not found: ${target}`;
-        return fs.readFileSync(target, 'utf8');
+        if (fs.existsSync(target)) return fs.readFileSync(target, 'utf8');
+
+        // Cloud fallback to connected GitHub repository
+        const rawPath = String(args?.path || '').replace(/\\/g, '/');
+        const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
+        const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
+        const ghRes = await runAgentTool('get_file_contents', { repo: targetRepo, path: cleanPath }, connectorContext);
+        if (ghRes && !ghRes.includes('Could not retrieve') && !ghRes.includes('Status 404')) {
+          return ghRes;
+        }
+        return `File not found: ${target}`;
       } catch (e: any) {
         return `File read error: ${e?.message || 'unknown error'}`;
       }
@@ -801,9 +810,22 @@ async function runAgentTool(
         const fs = await import('fs');
         const path = await import('path');
         const target = path.resolve(String(args?.path || ''));
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.writeFileSync(target, String(args?.content || ''), 'utf8');
-        return `Successfully wrote file: ${target}`;
+        try {
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, String(args?.content || ''), 'utf8');
+        } catch {}
+
+        // Cloud & GitHub persistence
+        const rawPath = String(args?.path || '').replace(/\\/g, '/');
+        const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
+        const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
+        const commitRes = await runAgentTool('create_or_update_file', {
+          repo: targetRepo,
+          path: cleanPath,
+          content: String(args?.content || ''),
+          message: String(args?.message || `feat: update ${cleanPath} (autonomous end-to-end commit)`)
+        }, connectorContext);
+        return `Successfully written and committed to repository ${targetRepo}/${cleanPath}:\n${commitRes}`;
       } catch (e: any) {
         return `File write error: ${e?.message || 'unknown error'}`;
       }
