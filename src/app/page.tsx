@@ -109,6 +109,7 @@ export default function Home() {
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
 
   // Two-Way Autonomous Proactive Mode (Disabled by default)
   const [isProactiveMode, setIsProactiveMode] = useState<boolean>(false);
@@ -1117,41 +1118,56 @@ export default function Home() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#1c1b18]">
-      {/* Claude Sidebar */}
-      <Sidebar
-        sessions={sessions}
-        activeSessionId={activeSession.id}
-        onSelectSession={(id) => {
-          setActiveSessionId(id);
-          const target = sessions.find((s) => s.id === id);
-          if (target?.activeModel) {
-            setActiveModel(target.activeModel);
-          }
-        }}
-        onNewSession={handleNewSession}
-        onDeleteSession={handleDeleteSession}
-        onToggleStar={handleToggleStar}
-        isOpenMobile={isMobileSidebarOpen}
-        onCloseMobile={() => setIsMobileSidebarOpen(false)}
-        onOpenConnectors={() => setIsConnectorsOpen(true)}
-        onOpenSettings={() => {
-          setSettingsTab('general');
-          setIsSettingsOpen(true);
-        }}
-        onOpenNewProject={() => setIsProjectModalOpen(true)}
-        onNewPMSession={handleNewPMSession}
-        onOpenAgents={() => setIsAgentsModalOpen(true)}
-        projects={projects}
-        activeConnectorsCount={activeConnectorsCount}
-        activeConnectors={currentSessionConnectors}
-        onToggleConnector={handleToggleConnector}
-        activeSessionTitle={activeSession.title}
-        hasGeminiKey={Boolean(geminiKey)}
-        onOpenFeatures={() => setIsFeaturesOpen(true)}
-      />
+      {/* Claude Sidebar with Toggle */}
+      {isSidebarOpen && (
+        <Sidebar
+          sessions={sessions}
+          activeSessionId={activeSession.id}
+          onSelectSession={(id) => {
+            setActiveSessionId(id);
+            const target = sessions.find((s) => s.id === id);
+            if (target?.activeModel) {
+              setActiveModel(target.activeModel);
+            }
+          }}
+          onNewSession={handleNewSession}
+          onDeleteSession={handleDeleteSession}
+          onToggleStar={handleToggleStar}
+          isOpenMobile={isMobileSidebarOpen}
+          onCloseMobile={() => setIsMobileSidebarOpen(false)}
+          onOpenConnectors={() => setIsConnectorsOpen(true)}
+          onOpenSettings={() => {
+            setSettingsTab('general');
+            setIsSettingsOpen(true);
+          }}
+          onOpenNewProject={() => setIsProjectModalOpen(true)}
+          onNewPMSession={handleNewPMSession}
+          onOpenAgents={() => setIsAgentsModalOpen(true)}
+          projects={projects}
+          activeConnectorsCount={activeConnectorsCount}
+          activeConnectors={currentSessionConnectors}
+          onToggleConnector={handleToggleConnector}
+          activeSessionTitle={activeSession.title}
+          hasGeminiKey={Boolean(geminiKey)}
+          onOpenFeatures={() => setIsFeaturesOpen(true)}
+        />
+      )}
 
       {/* Main Viewport */}
       <main className="flex-1 flex h-full overflow-hidden relative">
+        {/* Toggle Sidebar Button on Left Side */}
+        <button
+          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+          aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          className="absolute left-3 top-3 z-30 p-1.5 rounded-lg bg-[#282620]/80 hover:bg-[#38352d] text-[#8a8579] hover:text-[#ece9e2] border border-[#38352d] transition-all shadow-sm"
+          title={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <path d="M9 3v18" />
+            {isSidebarOpen ? <path d="m16 15-3-3 3-3" /> : <path d="m14 9 3 3-3 3" />}
+          </svg>
+        </button>
         <ChatArea
           messages={activeSession.messages}
           activeModel={activeModel}
