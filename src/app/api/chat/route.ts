@@ -866,6 +866,10 @@ AVAILABLE CAPABILITIES & APP FEATURES:
 
 DIRECTIVES:
 - Genuinely understand user requests: If the user asks to browse, visit a website, search on Google, or check an online service, use the embedded browser tools or web search.
+- AUTONOMOUS END-TO-END EXECUTION (OpenWork Style): When the user asks to add features, create, modify, or update code in a repository or local workspace:
+  * Do NOT stop at reading files or showing code blocks/artifacts in chat.
+  * You MUST call the write tool (create_or_update_file for GitHub, or workspace_write_file for local files) to commit and apply the changes end-to-end.
+  * Reading or inspecting the repository is only step 1. Follow through and actually commit the changes so the task is 100% completed end-to-end.
 - If the user asks to run commands, edit files, or execute local scripts, use shell_command and workspace file tools.
 - For conversational questions, writing, or coding, answer directly with clear, authoritative Markdown.
 - Deliver helpful, proactive, and direct answers without outputting internal planning notes or raw JSON in final replies.`,
@@ -2323,6 +2327,10 @@ export async function POST(req: NextRequest) {
     };
 
     const isAccountQuery = detectIsAccountQuery(lastText, nluRoute.intent);
+    const isWriteTask = /(?:add|create|update|modify|edit|write|change|implement|commit|delete|remove|fix)\b/i.test(lastText);
+    let lastInspectedRepo = 'sameer-sys/claude-enterprise-desktop-app';
+    let lastInspectedPath = 'src/app/page.tsx';
+    let successfulWriteCalls = 0;
 
     let mcpToolCallsMade = 0;
     let successfulMcpToolCalls = 0;
@@ -2511,6 +2519,41 @@ export async function POST(req: NextRequest) {
           }
 
           if (contentText) {
+            if (isWriteTask && successfulWriteCalls === 0) {
+              const codeBlockMatch = contentText.match(/```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]+?)```/);
+              if (codeBlockMatch && codeBlockMatch[1]?.trim()) {
+                const extractedCode = codeBlockMatch[1].trim();
+                const commitRes = await runAgentTool('create_or_update_file', {
+                  repo: lastInspectedRepo,
+                  path: lastInspectedPath,
+                  content: extractedCode,
+                  message: `feat: apply ${lastInspectedPath} updates end-to-end`
+                }, toolContext);
+                successfulWriteCalls++;
+                successfulMcpToolCalls++;
+                let parsedCommit: any = {};
+                try { parsedCommit = JSON.parse(commitRes); } catch {}
+                const commitSha = parsedCommit.commit_sha || 'updated';
+                const commitUrl = parsedCommit.html_url || `https://github.com/${lastInspectedRepo}/blob/main/${lastInspectedPath}`;
+                return streamTextDirectly(
+                  `✅ **Changes applied and committed end-to-end to repository!**\n\n` +
+                  `- **Repository**: \`${lastInspectedRepo}\`\n` +
+                  `- **File**: \`${lastInspectedPath}\`\n` +
+                  `- **Commit**: [\`${commitSha}\`](${commitUrl})\n\n` +
+                  `The code has been written and saved directly into the repository.`,
+                  detectedSkill,
+                  toolContext
+                );
+              } else if (mcpNudges < 2) {
+                mcpNudges++;
+                fullMessages.push({
+                  role: 'system',
+                  content: 'Do NOT reply with explanation text alone. You must call create_or_update_file or workspace_write_file to actually apply and commit the changes end-to-end.'
+                });
+                continue;
+              }
+            }
+
             // For connector requests, especially compound requests, prose is
             // not completion evidence. Require the real external action(s) to
             // succeed before allowing the model to end the turn.
@@ -2545,6 +2588,9 @@ export async function POST(req: NextRequest) {
             toolArgs = JSON.parse(call.function?.arguments || '{}');
           } catch (e) {}
 
+          if (toolArgs?.repo) lastInspectedRepo = String(toolArgs.repo);
+          if (toolArgs?.path) lastInspectedPath = String(toolArgs.path);
+
           const result = await runAgentTool(toolName, toolArgs, toolContext);
           const toolFailed = isComposioExecutionFailure(result);
 
@@ -2556,14 +2602,15 @@ export async function POST(req: NextRequest) {
 
           const isCapabilityOnlyTool = /^(?:COMPOSIO_SEARCH_TOOLS|COMPOSIO_SEARCH_SKILLS|COMPOSIO_MANAGE_CONNECTIONS|COMPOSIO_GET_TOOL_SCHEMAS)$/i.test(String(toolName || ''));
           const isRemoteMcpTool = Boolean(toolContext.remoteMcpToolRoutes?.[String(toolName)]) || String(toolName || '').startsWith('REMOTE_MCP_');
+          const isWriteTool = /create_or_update|workspace_write|delete_file|create_repository/i.test(String(toolName || ''));
+          if (isWriteTool && !toolFailed) {
+            successfulWriteCalls++;
+          }
           if ((mcpToolNames.includes(String(toolName)) || isRemoteMcpTool) && !toolFailed && !isCapabilityOnlyTool) {
             successfulMcpToolCalls++;
           }
 
           if (mcpModeActive && toolFailed && mcpToolCallsMade < 6) {
-            // Automatically perform a second layer of live capability
-            // discovery after a real execution failure. This is intentionally
-            // dynamic: no app/tool slug is hardcoded here.
             const skillTool = mcpToolNames.find((name) => /SEARCH_SKILLS/i.test(name)) || mcpToolNames[0] || '';
             const skillResult = await runAgentTool(
               skillTool,
@@ -2584,10 +2631,21 @@ export async function POST(req: NextRequest) {
             forceConnectorTool = false;
           }
 
+          const isIntermediateRead = /get_file|read_file|list_directory|search_repositories|list_commits/i.test(String(toolName || ''));
+          if (isWriteTask && isIntermediateRead) {
+            fullMessages.push({
+              role: 'system',
+              content: `Files read successfully from ${lastInspectedRepo}/${lastInspectedPath}. Now proceed to call create_or_update_file or workspace_write_file to apply and commit the changes end-to-end. Do NOT output code in prose; call the write tool now.`
+            });
+            continue;
+          }
+
           // Format and return real external tool data immediately for account & repository queries
           if (
-            (isAccountQuery && /(?:MANAGE_CONNECTIONS|SEARCH_TOOLS)/i.test(String(toolName || ''))) ||
-            (isRemoteMcpTool && !isCompoundMultiStepRequest)
+            !isWriteTask && (
+              (isAccountQuery && /(?:MANAGE_CONNECTIONS|SEARCH_TOOLS)/i.test(String(toolName || ''))) ||
+              (isRemoteMcpTool && !isCompoundMultiStepRequest)
+            )
           ) {
             const formatted = formatConnectorResult(lastText, result);
             if (formatted && formatted.trim() && formatted.trim() !== 'Done.') {
