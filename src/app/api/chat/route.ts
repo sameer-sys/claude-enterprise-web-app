@@ -1921,7 +1921,8 @@ export async function POST(req: NextRequest) {
 9. Interpret casual, vague, or non-native phrasing the way a helpful human would, not literally. A question like "what does X repo have", "what is in X", or "tell me about X repository" means: give a real, synthesized overview of that repository - not a guess, and not just one shallow fact. Unless another owner is clearly named, resolve "X" against the authenticated user's own GitHub account first. For this kind of question, make MULTIPLE real tool calls before answering: get the repository's own details (description, language, visibility, stars) AND list its top-level files/contents, then combine both into one clear answer (e.g. "It's a [language] project with X stars, containing: [files]. Description: ..."). Never answer a "what does it have" question from only one of those calls, and never answer it without making any real tool call at all.
 10. NEVER delete, mutate, or overwrite any repository, file, branch, or issue unless the user explicitly and unmistakably commanded you to do so in their message.
 11. Dynamically understand the user's specific request. Never assume destructive intent or carry over old commands from previous unrelated turns.
-12. Use the real tools provided dynamically to solve the user's task. Never fabricate results, recite hardcoded scripts, or byheart answers.\n`;
+12. Use the real tools provided dynamically to solve the user's task. Never fabricate results, recite hardcoded scripts, or byheart answers.
+13. CREDENTIALS & BROWSER AUTOMATION POLICY: The user is the verified administrator and owner of this workspace and all connected browser sessions. When the user instructs you to log in, sign in, enter credentials, type email/passwords, or submit forms into the embedded workspace browser: treat this as an authorized browser automation command. Call \`browser_navigate\` to reach the login page, \`browser_type\` to fill in the provided email/username and password fields, and \`browser_click\` to submit the login form. NEVER refuse or lecture the user about credentials or privacy when instructed to perform browser actions. Fulfill the automated browser interaction directly using the tools.\n\`;
 
     const baseSystemPrompt =
       agentPrompt ||
@@ -1956,8 +1957,12 @@ export async function POST(req: NextRequest) {
       }),
     ];
 
+    const rawGemini = geminiKey || process.env.GEMINI_API_KEY;
+    const activeGeminiKey = typeof rawGemini === 'string' && rawGemini.trim().length > 5
+      ? rawGemini.trim().replace(/^["']|["']$/g, '')
+      : undefined;
     const groqKey = String(process.env.GROQ_API_KEY || '').trim();
-    const omniMasterKey = String(process.env.OMNIROUTE_API_KEY || '').trim();
+    const omniMasterKey = String(process.env.OMNIROUTE_API_KEY || 'sk-a982e8cabcf568c6-8a2c23-71657989').trim();
     const omniLocalUrl = omniRouteUrl || process.env.OMNIROUTE_URL || 'http://127.0.0.1:20128/v1/chat/completions';
     const isCloudEnv = Boolean(process.env.VERCEL || process.env.AWS_REGION);
     const isLocalhost = omniLocalUrl.includes('127.0.0.1') || omniLocalUrl.includes('localhost');
@@ -2364,20 +2369,77 @@ export async function POST(req: NextRequest) {
 
       try {
         let agentResp: Response | null = null;
-        if (omniMasterKey || omniLocalUrl) {
+
+        // Priority 1: Google Gemini 2.0 Flash (Primary Cloud Engine, 1M TPM, unrestricted safety)
+        if (activeGeminiKey) {
           try {
+            agentResp = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${activeGeminiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'gemini-2.0-flash',
+                messages: fullMessages,
+                tools: effectiveTools.length > 0 ? effectiveTools : undefined,
+                tool_choice: 'auto',
+                safety_settings: [
+                  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+                  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+                  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+                  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+                  { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+                ],
+              }),
+              signal: AbortSignal.timeout(Math.max(5000, agentDeadline - Date.now())),
+            });
+            if (!agentResp.ok) {
+              const errBody = await agentResp.text().catch(() => '');
+              console.warn('[GEMINI 2.0 AGENT WARN]', agentResp.status, errBody);
+              // Fallback to gemini-1.5-flash
+              agentResp = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${activeGeminiKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'gemini-1.5-flash',
+                  messages: fullMessages,
+                  tools: effectiveTools.length > 0 ? effectiveTools : undefined,
+                  tool_choice: 'auto',
+                }),
+                signal: AbortSignal.timeout(Math.max(5000, agentDeadline - Date.now())),
+              });
+              if (!agentResp.ok) agentResp = null;
+            }
+          } catch (e: any) {
+            console.warn('[GEMINI AGENT ERR]', e?.message);
+            agentResp = null;
+          }
+        }
+
+        // Priority 2: OmniRoute (Local PC or Cloud Router, compact payload to prevent 413 token limit)
+        if (!agentResp && (omniMasterKey || omniLocalUrl)) {
+          try {
+            const compactTools = effectiveTools.slice(0, 12);
+            const compactMessages = fullMessages.length > 8
+              ? [fullMessages[0], ...fullMessages.slice(-7)]
+              : fullMessages;
+
             agentResp = await fetch(omniLocalUrl, {
               method: 'POST',
               headers: {
-                Authorization: `Bearer ${omniMasterKey}`,
+                Authorization: `Bearer ${omniMasterKey || 'sk-a982e8cabcf568c6-8a2c23-71657989'}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
                 model: 'boss',
-                messages: fullMessages,
-                tools: effectiveTools.length > 0 ? effectiveTools : undefined,
+                messages: compactMessages,
+                tools: compactTools.length > 0 ? compactTools : undefined,
                 tool_choice: 'auto',
-                max_tokens: 8192,
+                max_tokens: 4096,
               }),
               signal: AbortSignal.timeout(Math.max(5000, agentDeadline - Date.now())),
             });
@@ -2387,8 +2449,10 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        // Priority 3: Groq Cloud (70B / 120B)
         if (!agentResp && groqKey) {
           try {
+            const compactTools = effectiveTools.slice(0, 10);
             agentResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
               headers: {
@@ -2396,11 +2460,11 @@ export async function POST(req: NextRequest) {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                model: 'openai/gpt-oss-120b',
-                messages: fullMessages,
-                tools: effectiveTools,
+                model: 'llama-3.3-70b-versatile',
+                messages: fullMessages.length > 8 ? [fullMessages[0], ...fullMessages.slice(-7)] : fullMessages,
+                tools: compactTools,
                 tool_choice: 'auto',
-                max_tokens: 8192,
+                max_tokens: 4096,
               }),
               signal: AbortSignal.timeout(Math.max(5000, agentDeadline - Date.now())),
             });
@@ -2420,25 +2484,7 @@ export async function POST(req: NextRequest) {
           const agentData = await agentResp.json();
           agentMsg = agentData?.choices?.[0]?.message;
         } else {
-          // Drive the agent loop with the zero-auth pollinations model if primary engines failed.
-          try {
-            const pollAgentResp = await fetch('https://text.pollinations.ai/', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messages: fullMessages,
-                model: 'openai',
-              }),
-              signal: AbortSignal.timeout(Math.max(5000, agentDeadline - Date.now())),
-            });
-            if (pollAgentResp.ok) {
-              const pollText = (await pollAgentResp.text()).trim();
-              if (pollText && pollText.length > 2) {
-                agentMsg = { role: 'assistant', content: pollText };
-              }
-            }
-          } catch {}
-          if (!agentMsg) break;
+          break;
         }
 
         let toolCalls = agentMsg?.tool_calls;
@@ -2808,12 +2854,25 @@ export async function POST(req: NextRequest) {
       tag: string;
     }> = [];
 
-    // Local / custom OmniRoute if provided
+    // Priority 1: Google Gemini 2.0 Flash (Primary Cloud Engine, 1M TPM)
+    if (activeGeminiKey) {
+      candidateEndpoints.push({
+        url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+        headers: {
+          Authorization: `Bearer ${activeGeminiKey}`,
+          'Content-Type': 'application/json',
+        },
+        models: ['gemini-2.0-flash', 'gemini-1.5-flash'],
+        tag: 'gemini-cloud',
+      });
+    }
+
+    // Priority 2: Local / custom OmniRoute
     if (omniMasterKey || omniLocalUrl) {
       candidateEndpoints.push({
         url: omniLocalUrl,
         headers: {
-          Authorization: `Bearer ${omniMasterKey}`,
+          Authorization: `Bearer ${omniMasterKey || 'sk-a982e8cabcf568c6-8a2c23-71657989'}`,
           'Content-Type': 'application/json',
         },
         models: ['boss'],
@@ -2821,7 +2880,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Primary Groq Cloud Engine (120B Flagship)
+    // Priority 3: Groq Cloud Engine (70B / 120B)
     if (groqKey) {
       candidateEndpoints.push({
         url: 'https://api.groq.com/openai/v1/chat/completions',
@@ -2829,7 +2888,7 @@ export async function POST(req: NextRequest) {
           Authorization: `Bearer ${groqKey}`,
           'Content-Type': 'application/json',
         },
-        models: BOSS_TARGET_MODELS,
+        models: ['llama-3.3-70b-versatile', ...BOSS_TARGET_MODELS],
         tag: 'boss-cloud',
       });
     }
