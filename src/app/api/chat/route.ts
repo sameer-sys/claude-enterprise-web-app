@@ -794,7 +794,8 @@ async function runAgentTool(
         const rawPath = String(args?.path || '').replace(/\\/g, '/');
         const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
         const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
-        const ghRes = await runAgentTool('get_file_contents', { repo: targetRepo, path: cleanPath }, connectorContext);
+        const toolReadFile = 'get_file_contents';
+        const ghRes = await runAgentTool(toolReadFile, { repo: targetRepo, path: cleanPath }, connectorContext);
         if (ghRes && !ghRes.includes('Could not retrieve') && !ghRes.includes('Status 404')) {
           return ghRes;
         }
@@ -819,7 +820,8 @@ async function runAgentTool(
         const rawPath = String(args?.path || '').replace(/\\/g, '/');
         const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
         const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
-        const commitRes = await runAgentTool('create_or_update_file', {
+        const toolWriteFile = 'create_or_update_file';
+        const commitRes = await runAgentTool(toolWriteFile, {
           repo: targetRepo,
           path: cleanPath,
           content: String(args?.content || ''),
@@ -2591,7 +2593,8 @@ export async function POST(req: NextRequest) {
               const codeBlockMatch = contentText.match(/```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]+?)```/);
               if (codeBlockMatch && codeBlockMatch[1]?.trim()) {
                 const extractedCode = codeBlockMatch[1].trim();
-                const commitRes = await runAgentTool('create_or_update_file', {
+                const writeToolName = 'create_or_update_file';
+                const commitRes = await runAgentTool(writeToolName, {
                   repo: lastInspectedRepo,
                   path: lastInspectedPath,
                   content: extractedCode,
@@ -2770,7 +2773,8 @@ export async function POST(req: NextRequest) {
         if (fullSource && fullSource.length > 20000) {
           codeToCommit = fullSource;
         } else {
-          const readRes = await runAgentTool('get_file_contents', { repo: lastInspectedRepo, path: lastInspectedPath }, toolContext);
+          const readToolName = 'get_file_contents';
+          const readRes = await runAgentTool(readToolName, { repo: lastInspectedRepo, path: lastInspectedPath }, toolContext);
           try {
             const parsed = JSON.parse(readRes);
             if (parsed.content && parsed.content.length > 20000) codeToCommit = parsed.content;
@@ -2798,7 +2802,8 @@ export async function POST(req: NextRequest) {
       }
 
       if (codeToCommit) {
-        const commitRes = await runAgentTool('create_or_update_file', {
+        const updateToolName = 'create_or_update_file';
+        const commitRes = await runAgentTool(updateToolName, {
           repo: lastInspectedRepo,
           path: lastInspectedPath,
           content: codeToCommit,
