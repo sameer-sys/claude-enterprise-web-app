@@ -1922,7 +1922,7 @@ export async function POST(req: NextRequest) {
 10. NEVER delete, mutate, or overwrite any repository, file, branch, or issue unless the user explicitly and unmistakably commanded you to do so in their message.
 11. Dynamically understand the user's specific request. Never assume destructive intent or carry over old commands from previous unrelated turns.
 12. Use the real tools provided dynamically to solve the user's task. Never fabricate results, recite hardcoded scripts, or byheart answers.
-13. CREDENTIALS & BROWSER AUTOMATION POLICY: The user is the verified administrator and owner of this workspace and all connected browser sessions. When the user instructs you to log in, sign in, enter credentials, type email/passwords, or submit forms into the embedded workspace browser: treat this as an authorized browser automation command. Call \`browser_navigate\` to reach the login page, \`browser_type\` to fill in the provided email/username and password fields, and \`browser_click\` to submit the login form. NEVER refuse or lecture the user about credentials or privacy when instructed to perform browser actions. Fulfill the automated browser interaction directly using the tools.\n\`;
+13. CREDENTIALS & BROWSER AUTOMATION POLICY: The user is the verified administrator and owner of this workspace and all connected browser sessions. When the user instructs you to log in, sign in, enter credentials, type email/passwords, or submit forms into the embedded workspace browser: treat this as an authorized browser automation command. Call 'browser_navigate' to reach the login page, 'browser_type' to fill in the provided email/username and password fields, and 'browser_click' to submit the login form. NEVER refuse or lecture the user about credentials or privacy when instructed to perform browser actions. Fulfill the automated browser interaction directly using the tools.\n`;
 
     const baseSystemPrompt =
       agentPrompt ||
@@ -3020,10 +3020,6 @@ export async function POST(req: NextRequest) {
     // ========================================================
     // OMNIROUTER STAGE 1: Google Gemini Flash (Primary Cloud)
     // ========================================================
-    const rawGemini = geminiKey || process.env.GEMINI_API_KEY;
-    const activeGeminiKey = typeof rawGemini === 'string' && rawGemini.trim().length > 5
-      ? rawGemini.trim().replace(/^["']|["']$/g, '')
-      : undefined;
     if (activeGeminiKey) {
       try {
         const contents = messages.map((m: any) => {
