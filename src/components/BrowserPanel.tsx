@@ -12,6 +12,8 @@ import {
   Search,
   Lock,
   Sparkles,
+  Columns,
+  GripVertical,
 } from 'lucide-react';
 
 interface BrowserPanelProps {
@@ -36,8 +38,21 @@ export default function BrowserPanel({
   const [currentUrl, setCurrentUrl] = useState<string>(initialUrl);
   const [inputUrl, setInputUrl] = useState<string>(initialUrl);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('browser_panel_width');
+      if (saved) {
+        const num = parseInt(saved, 10);
+        if (!isNaN(num) && num >= 360 && num <= 1920) return num;
+      }
+      return Math.min(860, Math.round(window.innerWidth * 0.55));
+    }
+    return 860;
+  });
 
+  const isResizingRef = useRef<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const normalizeUrl = (raw: string): string => {
     const trimmed = raw.trim();
@@ -122,11 +137,57 @@ export default function BrowserPanel({
     }
   }, [isOpen, initialUrl, onUrlChange, syncBounds]);
 
-  // Also sync bounds whenever fullscreen mode toggles
+  // Sync bounds whenever panel width or fullscreen changes
   useEffect(() => {
-    const t = setTimeout(syncBounds, 100);
+    const t = setTimeout(syncBounds, 60);
     return () => clearTimeout(t);
-  }, [isFullscreen, syncBounds]);
+  }, [panelWidth, isFullscreen, syncBounds]);
+
+  // Drag-to-resize listener
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const newWidth = Math.max(380, Math.min(window.innerWidth - 60, window.innerWidth - e.clientX));
+      setPanelWidth(newWidth);
+      try {
+        localStorage.setItem('browser_panel_width', String(newWidth));
+      } catch {}
+      syncBounds();
+    };
+
+    const handleMouseUp = () => {
+      if (isResizingRef.current) {
+        isResizingRef.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        syncBounds();
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [syncBounds]);
+
+  const handleStartResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const setPresetWidth = (fraction: number) => {
+    setIsFullscreen(false);
+    const targetWidth = Math.max(380, Math.round(window.innerWidth * fraction));
+    setPanelWidth(targetWidth);
+    try {
+      localStorage.setItem('browser_panel_width', String(targetWidth));
+    } catch {}
+    setTimeout(syncBounds, 60);
+  };
 
   const navigateTo = (target: string) => {
     const clean = normalizeUrl(target);
@@ -164,10 +225,23 @@ export default function BrowserPanel({
 
   return (
     <div
-      className={`fixed top-0 right-0 h-full bg-[#161512] border-l border-[#2e2c25] flex flex-col z-40 transition-all duration-200 shadow-2xl ${
-        isFullscreen ? 'w-full inset-0 z-50' : 'w-full md:w-[720px] lg:w-[860px] xl:w-[960px]'
+      ref={panelRef}
+      style={!isFullscreen ? { width: `${panelWidth}px` } : undefined}
+      className={`fixed top-0 right-0 h-full bg-[#161512] border-l border-[#2e2c25] flex flex-col z-40 transition-none shadow-2xl ${
+        isFullscreen ? 'w-full inset-0 z-50' : ''
       }`}
     >
+      {/* Draggable Left Resize Handle */}
+      {!isFullscreen && (
+        <div
+          onMouseDown={handleStartResize}
+          className="absolute left-0 top-0 bottom-0 w-2 -ml-1 cursor-ew-resize hover:bg-[#cc785c]/60 active:bg-[#cc785c] z-50 flex items-center justify-center group transition-colors"
+          title="Drag to adjust browser width"
+        >
+          <div className="w-1 h-8 rounded-full bg-[#524d40] group-hover:bg-[#f2eee6] transition-colors" />
+        </div>
+      )}
+
       {/* Top Header: Nav, Clean Address Bar, Window Controls */}
       <div className="flex flex-col border-b border-[#2a2822] bg-[#1d1c18] shrink-0">
         {/* Main Toolbar */}
@@ -225,13 +299,53 @@ export default function BrowserPanel({
             </div>
           </form>
 
-          {/* Window Controls */}
+          {/* Window & Width Adjustment Controls */}
           <div className="flex items-center space-x-1 shrink-0">
+            {/* Quick Size Presets */}
+            <div className="hidden sm:flex items-center bg-[#141310] border border-[#333028] rounded-lg p-0.5 space-x-0.5">
+              <button
+                type="button"
+                onClick={() => setPresetWidth(0.35)}
+                className={`px-1.5 py-0.5 text-[10px] rounded font-medium transition-colors ${
+                  !isFullscreen && Math.abs(panelWidth - (typeof window !== 'undefined' ? window.innerWidth * 0.35 : 500)) < 40
+                    ? 'bg-[#cc785c] text-white'
+                    : 'text-[#8c867a] hover:text-[#ece9e2] hover:bg-[#26241e]'
+                }`}
+                title="Compact View (35% screen width)"
+              >
+                35%
+              </button>
+              <button
+                type="button"
+                onClick={() => setPresetWidth(0.50)}
+                className={`px-1.5 py-0.5 text-[10px] rounded font-medium transition-colors ${
+                  !isFullscreen && Math.abs(panelWidth - (typeof window !== 'undefined' ? window.innerWidth * 0.50 : 700)) < 40
+                    ? 'bg-[#cc785c] text-white'
+                    : 'text-[#8c867a] hover:text-[#ece9e2] hover:bg-[#26241e]'
+                }`}
+                title="Half View (50% screen width)"
+              >
+                50%
+              </button>
+              <button
+                type="button"
+                onClick={() => setPresetWidth(0.70)}
+                className={`px-1.5 py-0.5 text-[10px] rounded font-medium transition-colors ${
+                  !isFullscreen && Math.abs(panelWidth - (typeof window !== 'undefined' ? window.innerWidth * 0.70 : 1000)) < 40
+                    ? 'bg-[#cc785c] text-white'
+                    : 'text-[#8c867a] hover:text-[#ece9e2] hover:bg-[#26241e]'
+                }`}
+                title="Wide View (70% screen width)"
+              >
+                70%
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={() => setIsFullscreen((prev) => !prev)}
               className="p-1.5 rounded-lg hover:bg-[#2b2923] text-[#a09b8f] hover:text-[#ece9e2] transition-colors"
-              title={isFullscreen ? 'Restore' : 'Maximize'}
+              title={isFullscreen ? 'Restore Previous Width' : 'Maximize Fullscreen'}
             >
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>

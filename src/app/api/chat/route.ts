@@ -2584,8 +2584,9 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
     const isAccountQuery = detectIsAccountQuery(lastText, nluRoute.intent);
     const isWriteTask =
-      /(?:commit|push\s+to|save\s+to\s+file|write\s+to\s+file|create\s+file|update\s+file|modify\s+file|edit\s+file)\b/i.test(lastText) &&
-      /(?:repo|repository|branch|github|\.tsx?|\.jsx?|\.py|\.json|\.md|src\/|app\/)\b/i.test(lastText);
+      /(?:commit|push|save|write|create|update|modify|edit|change|fix|add|implement|button|feature|toggle|resize|adjust|component)\b/i.test(lastText) &&
+      (/(?:repo|repository|branch|github|\.tsx?|\.jsx?|\.py|\.json|\.md|src\/|app\/|file|files|panel|code|component|ui|button|page|css|html)\b/i.test(lastText) ||
+       /(?:add\s+it|do\s+it|make\s+it|fix\s+it|change\s+it|update\s+it|commit\s+it)\b/i.test(lastText));
     let lastInspectedRepo = 'sameer-sys/claude-enterprise-desktop-app';
     let lastInspectedPath = 'src/app/page.tsx';
     let successfulWriteCalls = 0;
@@ -2830,7 +2831,8 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
             if (contentText && contentText.trim()) {
               return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
             }
-            if (currentTurnToolCount > 0 && lastCurrentTurnToolResult) {
+            const wantsExplicitRead = /(?:show\s+(?:me\s+)?(?:the\s+)?(?:file|code|content)|view\s+(?:file|code)|read\s+(?:the\s+)?file|cat\s+|display\s+(?:file|code))\b/i.test(lastText);
+            if (wantsExplicitRead && currentTurnToolCount > 0 && lastCurrentTurnToolResult) {
               const formatted = formatConnectorResult(lastText, lastCurrentTurnToolResult);
               if (formatted) {
                 return streamTextDirectly(formatted, detectedSkill, toolContext, false, agentName);
@@ -2839,10 +2841,10 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
           }
 
           if (contentText) {
-            if (isWriteTask && successfulWriteCalls === 0) {
-              const codeBlockMatch = contentText.match(/```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]+?)```/);
-              if (codeBlockMatch && codeBlockMatch[1]?.trim()) {
-                const extractedCode = codeBlockMatch[1].trim();
+            const codeBlockMatch = contentText.match(/```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]+?)```/);
+            if (codeBlockMatch && codeBlockMatch[1]?.trim() && (isWriteTask || lastInspectedPath)) {
+              const extractedCode = codeBlockMatch[1].trim();
+              if (extractedCode.length > 200 && successfulWriteCalls === 0) {
                 const writeToolName = 'create_or_update_file';
                 const commitRes = await runAgentTool(writeToolName, {
                   repo: lastInspectedRepo,
@@ -2861,15 +2863,17 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                   `- **Repository**: \`${lastInspectedRepo}\`\n` +
                   `- **File**: \`${lastInspectedPath}\`\n` +
                   `- **Commit**: [\`${commitSha}\`](${commitUrl})\n\n` +
-                  contentText, detectedSkill, toolContext, false, agentName);
-              } else if (mcpNudges < 2) {
-                mcpNudges++;
-                fullMessages.push({
-                  role: 'system',
-                  content: 'Do NOT reply with explanation text alone. You must call create_or_update_file or workspace_write_file to actually apply and commit the changes end-to-end.'
-                });
-                continue;
+                  `I have updated \`${lastInspectedPath}\` and committed the changes directly to your repository.`,
+                  detectedSkill, toolContext, false, agentName
+                );
               }
+            } else if (isWriteTask && successfulWriteCalls === 0 && mcpNudges < 2) {
+              mcpNudges++;
+              fullMessages.push({
+                role: 'system',
+                content: 'Do NOT reply with explanation text alone. You must call create_or_update_file or workspace_write_file to actually apply and commit the changes end-to-end.'
+              });
+              continue;
             }
 
             // For connector requests, especially compound requests, prose is
@@ -3047,7 +3051,8 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     // text answer (the model keeps echoing serialized tool-call JSON), format
     // the last real tool result directly. Never grab old tools from past conversation turns.
     if (currentTurnToolCount > 0 && lastCurrentTurnToolResult) {
-      if (!isWriteTask || successfulWriteCalls > 0) {
+      const wantsExplicitRead = /(?:show\s+(?:me\s+)?(?:the\s+)?(?:file|code|content|repos|list)|view\s+(?:file|code|repos)|read\s+(?:the\s+)?file|cat\s+|display\s+(?:file|code)|what\s+are\s+they|how\s+many)\b/i.test(lastText);
+      if (wantsExplicitRead && (!isWriteTask || successfulWriteCalls > 0)) {
         const formatted = formatConnectorResult(lastText, typeof lastCurrentTurnToolResult === 'string' ? lastCurrentTurnToolResult.trim() : JSON.stringify(lastCurrentTurnToolResult));
         if (formatted && formatted.trim() && formatted.trim() !== 'Done.') {
           return streamTextDirectly(formatted, detectedSkill, toolContext, false, agentName);
