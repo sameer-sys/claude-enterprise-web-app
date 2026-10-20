@@ -3359,6 +3359,8 @@ export async function POST(req: NextRequest) {
         Connection: 'keep-alive',
         'X-Claude-Skill': 'Enterprise Resilience',
         'X-Claude-Router': 'claude-emergency-shield',
+        'X-Emergency-Error': encodeURIComponent(String(error?.message || error)),
+        'X-Emergency-Stack': encodeURIComponent(String(error?.stack || '').slice(0, 500)),
       },
     });
   }
