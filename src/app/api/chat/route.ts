@@ -2152,13 +2152,21 @@ export async function POST(req: NextRequest) {
       console.warn('[CLAUDE DESKTOP MCP DISCOVERY ERR]', e?.message);
     }
 
-    // Unify all tools: Core AGENT_TOOLS (web, browser, email) + Claude Desktop MCPs + Remote MCPs
+    // Unify all tools: Intent-matched connector tools FIRST, then core AGENT_TOOLS, then desktop MCPs
     const allToolsMap = new Map<string, any>();
+    for (const tool of (focusedCandidateTools.length ? focusedCandidateTools : remoteMcpTools)) {
+      const name = String(tool.originalName || tool.function?.name || '').trim();
+      allToolsMap.set(name, tool);
+    }
     for (const tool of AGENT_TOOLS) {
-      allToolsMap.set(tool.function.name, tool);
+      if (!allToolsMap.has(tool.function.name)) {
+        allToolsMap.set(tool.function.name, tool);
+      }
     }
     for (const tool of claudeDesktopTools) {
-      allToolsMap.set(tool.function.name, tool);
+      if (!allToolsMap.has(tool.function.name)) {
+        allToolsMap.set(tool.function.name, tool);
+      }
     }
 
     // Dynamic discovery of ANY connector/tool registered on the Local Bridge
@@ -2168,16 +2176,13 @@ export async function POST(req: NextRequest) {
         const bridgeData = await bridgeToolsRes.json();
         if (Array.isArray(bridgeData?.tools)) {
           for (const bTool of bridgeData.tools) {
-            allToolsMap.set(bTool.function.name, bTool);
+            if (!allToolsMap.has(bTool.function.name)) {
+              allToolsMap.set(bTool.function.name, bTool);
+            }
           }
         }
       }
     } catch {}
-
-    for (const tool of (focusedCandidateTools.length ? focusedCandidateTools : remoteMcpTools)) {
-      const name = String(tool.originalName || tool.function?.name || '').trim();
-      allToolsMap.set(name, tool);
-    }
 
     const rawTools = Array.from(allToolsMap.values()).slice(0, 40);
 
@@ -2503,9 +2508,29 @@ export async function POST(req: NextRequest) {
             });
             if (!agentResp.ok) {
               const errBody = await agentResp.text().catch(() => '');
-              console.error('[AGENT GROQ ERR]', agentResp.status, errBody);
+              console.warn('[AGENT GROQ 120B ERR/LIMIT]', agentResp.status, errBody);
               agentLoopDebugInfo = `groq:${agentResp.status}:${String(errBody).slice(0, 200)}`;
-              agentResp = null;
+              // Immediate fallback to 20B or Qwen 27B if 120B is rate-limited or unavailable
+              try {
+                agentResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${groqKey}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    model: 'openai/gpt-oss-20b',
+                    messages: fullMessages.length > 8 ? [fullMessages[0], ...fullMessages.slice(-7)] : fullMessages,
+                    tools: compactTools,
+                    tool_choice: 'auto',
+                    max_tokens: 4096,
+                  }),
+                  signal: AbortSignal.timeout(Math.max(5000, agentDeadline - Date.now())),
+                });
+                if (!agentResp.ok) agentResp = null;
+              } catch {
+                agentResp = null;
+              }
             }
           } catch {
             agentResp = null;
@@ -2699,10 +2724,13 @@ export async function POST(req: NextRequest) {
           const result = await runAgentTool(toolName, toolArgs, toolContext);
           const toolFailed = isComposioExecutionFailure(result);
 
+          const safeToolContent = typeof result === 'string' && result.length > 3500
+            ? result.slice(0, 3500) + '\n...[result truncated for concise agent processing]'
+            : result;
           fullMessages.push({
             role: 'tool',
             tool_call_id: call.id,
-            content: result,
+            content: safeToolContent,
           });
 
           const isCapabilityOnlyTool = /^(?:COMPOSIO_SEARCH_TOOLS|COMPOSIO_SEARCH_SKILLS|COMPOSIO_MANAGE_CONNECTIONS|COMPOSIO_GET_TOOL_SCHEMAS)$/i.test(String(toolName || ''));
