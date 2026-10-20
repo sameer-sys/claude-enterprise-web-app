@@ -1283,7 +1283,7 @@ function formatConnectorResult(requestText: string, result: any): string {
 
   // GitHub user profile response from get_me
   if (data?.login && (data?.id || data?.node_id || data?.public_repos !== undefined || data?.profile_url)) {
-    const repos = data?.details?.public_repos ?? data?.public_repos ?? 9;
+    const repos = data?.details?.public_repos ?? data?.public_repos ?? (Array.isArray(data?.repositories) ? data.repositories.length : undefined);
     return `You are connected to **GitHub** via live MCP tools.\n\n- **Account:** [${data.login}](${data.profile_url || `https://github.com/${data.login}`})\n- **Public Repositories:** ${repos}\n- **Status:** Connected & Active\n- **Live Capabilities:** Repositories, issues, pull requests, files, and commits.`;
   }
 
@@ -1343,7 +1343,7 @@ function formatConnectorResult(requestText: string, result: any): string {
     const manageUrl = data.redirect_url || data.manage_url || data.url;
 
     if (data?.message && /github/i.test(String(data.message))) {
-      return `You are connected to **GitHub** via live MCP tools.\n\n- **Account:** [sameer-sys](https://github.com/sameer-sys)\n- **Public Repositories:** 11\n- **Status:** Connected & Active\n- **Live Capabilities:** Repositories, issues, pull requests, files, and commits.`;
+      return `Connected to **GitHub** account **${data.login || "sameer-sys"}** with live MCP tools available (repositories, issues, pull requests, commits).`;
     }
 
     // Surface upstream failures instead of reporting them as "0 apps". A failed
@@ -1406,7 +1406,7 @@ function formatConnectorResult(requestText: string, result: any): string {
 
   // GitHub user profile response from get_me
   if (data?.login && (data?.profile_url || data?.avatar_url || data?.details)) {
-    const repos = data?.details?.public_repos ?? data?.public_repos ?? 7;
+    const repos = data?.details?.public_repos ?? data?.public_repos ?? (Array.isArray(data?.repositories) ? data.repositories.length : undefined);
     return `**Connected GitHub Account:**\n- **User:** [${data.login}](${data.profile_url || `https://github.com/${data.login}`})\n- **Public Repositories:** ${repos}\n- **ID:** ${data.id}\n- **Profile:** ${data.profile_url || `https://github.com/${data.login}`}`;
   }
 
@@ -1753,13 +1753,7 @@ async function synthesizeClaudeEnterpriseResponse(
   const text = String(lastText || '').trim();
   if (!text) return 'Please enter a message.';
 
-  const lastTool = [...(messages || [])].reverse().find((m: any) => m && m.role === 'tool');
-  if (lastTool && typeof lastTool.content === 'string' && lastTool.content.trim()) {
-    const formatted = formatConnectorResult(text, lastTool.content.trim());
-    if (formatted && formatted.trim() && formatted.trim() !== 'Done.') {
-      return formatted;
-    }
-  }
+  // Do not dump old tool messages from history on conversational turns
 
   return 'I am ready to help you with your tasks, code, and connected tools (GitHub, repositories, issues, files, and more). How would you like to proceed?';
 }
@@ -2438,7 +2432,8 @@ export async function POST(req: NextRequest) {
     const legacyConnectorSignal = isConnectorRelatedRequest(lastText, contextHistoryText);
     const nluConnectorIntent = ['CONNECTOR_STATUS', 'CONNECTOR_DISCOVERY', 'CONNECTOR_ACTION'].includes(nluRoute.intent);
     const nluConfidentNonConnector = nluRoute.confidence >= 0.82 && ['CHAT', 'WEB_RESEARCH', 'CLARIFICATION'].includes(nluRoute.intent);
-    const isExplicitConnectorAction = (legacyConnectorSignal || isConnectorRelatedRequest(combinedNlpText)) &&
+    const isActionVerb = /(?:create|make|build|add|delete|remove|close|open|fetch|get|list|search|show|find|query|check|inspect|clone|push|commit|update|write to|read from)\b/i.test(lastText);
+    const isExplicitConnectorAction = isActionVerb && (legacyConnectorSignal || isConnectorRelatedRequest(combinedNlpText)) &&
       /(?:github|git|repo|repos|repository|repositories|pull request|pull|pr|issue|issues|ticket|commit|commits|branch|file|files|readme|name it as|delete this one)/i.test(combinedNlpText);
     const connectorRequest = nluConnectorIntent || remoteConnectorMention || isExplicitConnectorAction || (legacyConnectorSignal && !nluConfidentNonConnector);
     const hasRemoteMcpTools = remoteMcpTools.length > 0;
@@ -2494,6 +2489,8 @@ export async function POST(req: NextRequest) {
     let lastInspectedRepo = 'sameer-sys/claude-enterprise-desktop-app';
     let lastInspectedPath = 'src/app/page.tsx';
     let successfulWriteCalls = 0;
+    let currentTurnToolCount = 0;
+    let lastCurrentTurnToolResult: any = null;
 
     let mcpToolCallsMade = 0;
     let successfulMcpToolCalls = 0;
@@ -2730,17 +2727,14 @@ export async function POST(req: NextRequest) {
             /(?:we need to|we should|let's call|i will call|calling|we must|action likely|use composio|should output tool call|user wants|user asks|need to call|need to find|first, need to|first need to|use composio_|to search actions|search actions for)/i.test(checkText);
 
           if (isPlanningText && !isWriteTask) {
-            // Check if there was already a tool result we can summarize or format
-            const lastToolMsg = [...fullMessages].reverse().find((m: any) => m && m.role === 'tool');
-            if (lastToolMsg && typeof lastToolMsg.content === 'string') {
-              const formatted = formatConnectorResult(lastText, lastToolMsg.content);
+            if (contentText && contentText.trim()) {
+              return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
+            }
+            if (currentTurnToolCount > 0 && lastCurrentTurnToolResult) {
+              const formatted = formatConnectorResult(lastText, lastCurrentTurnToolResult);
               if (formatted) {
                 return streamTextDirectly(formatted, detectedSkill, toolContext, false, agentName);
               }
-            }
-
-            if (contentText) {
-              return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
             }
           }
 
@@ -2817,6 +2811,8 @@ export async function POST(req: NextRequest) {
           if (toolArgs?.path) lastInspectedPath = String(toolArgs.path);
 
           const result = await runAgentTool(toolName, toolArgs, toolContext);
+          currentTurnToolCount++;
+          lastCurrentTurnToolResult = result;
           const toolFailed = isComposioExecutionFailure(result);
 
           const safeToolContent = typeof result === 'string' && result.length > 3500
@@ -2935,24 +2931,7 @@ export async function POST(req: NextRequest) {
           } catch {}
         }
 
-        if (codeToCommit && !codeToCommit.includes('isSidebarOpen')) {
-          codeToCommit = codeToCommit.replace(
-            /export default function Home\(\)\s*\{/,
-            'export default function Home() {\n  const [isSidebarOpen, setIsSidebarOpen] = useState(true);'
-          );
-          codeToCommit = codeToCommit.replace(
-            /\{\/\* Claude Sidebar \*\/\}\s*<Sidebar/,
-            '{/* Claude Sidebar with Toggle */}\n      {isSidebarOpen && (\n        <Sidebar'
-          );
-          codeToCommit = codeToCommit.replace(
-            /onOpenFeatures=\{\(\) => setIsFeaturesOpen\(true\)\}\s*\/>/,
-            'onOpenFeatures={() => setIsFeaturesOpen(true)}\n      />\n      )}'
-          );
-          codeToCommit = codeToCommit.replace(
-            /<ChatArea/,
-            '<ChatArea\n          isSidebarOpen={isSidebarOpen}\n          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}'
-          );
-        }
+
       }
 
       if (codeToCommit) {
@@ -2978,14 +2957,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // If the agent loop executed real tools but never produced a clean final
+    // If the agent loop executed real tools in THIS turn but never produced a clean final
     // text answer (the model keeps echoing serialized tool-call JSON), format
-    // the last real tool result directly instead of letting the fallback LLM
-    // echo raw JSON to the user.
-    const lastLoopMsg = [...fullMessages].reverse().find((m: any) => m && m.role === 'tool');
-    if (lastLoopMsg && typeof lastLoopMsg.content === 'string' && lastLoopMsg.content.trim()) {
+    // the last real tool result directly. Never grab old tools from past conversation turns.
+    if (currentTurnToolCount > 0 && lastCurrentTurnToolResult) {
       if (!isWriteTask || successfulWriteCalls > 0) {
-        const formatted = formatConnectorResult(lastText, lastLoopMsg.content.trim());
+        const formatted = formatConnectorResult(lastText, typeof lastCurrentTurnToolResult === 'string' ? lastCurrentTurnToolResult.trim() : JSON.stringify(lastCurrentTurnToolResult));
         if (formatted && formatted.trim() && formatted.trim() !== 'Done.') {
           return streamTextDirectly(formatted, detectedSkill, toolContext, false, agentName);
         }
