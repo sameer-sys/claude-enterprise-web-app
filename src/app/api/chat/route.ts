@@ -2864,20 +2864,6 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
-          // Format and return real external tool data immediately for account & repository queries
-          if (
-            !isWriteTask && (
-              (isAccountQuery && /(?:MANAGE_CONNECTIONS|SEARCH_TOOLS)/i.test(String(toolName || ''))) ||
-              (isRemoteMcpTool && !isCompoundMultiStepRequest)
-            )
-          ) {
-            const formatted = formatConnectorResult(lastText, result);
-            if (formatted && formatted.trim() && formatted.trim() !== 'Done.') {
-              return streamTextDirectly(
-                formatted, detectedSkill, toolContext, false, agentName);
-            }
-          }
-
           if (mcpToolNames.includes(String(toolName)) || isRemoteMcpTool) mcpToolCallsMade++;
         }
         // Once a real MCP tool has run, let the model decide: keep calling tools or finish.
