@@ -313,6 +313,25 @@ export default function Home() {
     });
   }, []);
 
+  // Detect OpenWork local bridge (Electron or localhost:48080)
+  const [hasLocalBridge, setHasLocalBridge] = useState<boolean>(false);
+
+  useEffect(() => {
+    let active = true;
+    const probe = async () => {
+      try {
+        if (typeof window !== 'undefined' && (window as any).electronAPI?.isElectron) {
+          if (active) setHasLocalBridge(true);
+          return;
+        }
+        const res = await fetch('http://127.0.0.1:48080/api/status', { signal: AbortSignal.timeout(1200) });
+        if (res.ok && active) setHasLocalBridge(true);
+      } catch {}
+    };
+    probe();
+    return () => { active = false; };
+  }, []);
+
   const handleSaveSyncRoomId = async (input: string) => {
     const code = input.trim();
     if (!/^[A-Za-z0-9_-]{32,128}$/.test(code)) {
@@ -912,6 +931,8 @@ export default function Home() {
         agentPrompt: activeSession.agentPrompt,
         connectors: currentSessionConnectors,
         workspaceMemory: savedWorkspaceMemory,
+        hasLocalBridge,
+        isElectron: typeof window !== 'undefined' && Boolean((window as any).electronAPI?.isElectron),
       };
 
       // Composio access/refresh tokens are kept in server-side HttpOnly cookies.

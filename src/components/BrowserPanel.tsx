@@ -12,9 +12,15 @@ import {
   Search,
   Lock,
   Sparkles,
-  Columns,
-  GripVertical,
+  Plus,
+  Globe,
 } from 'lucide-react';
+
+interface BrowserTab {
+  id: string;
+  url: string;
+  title: string;
+}
 
 interface BrowserPanelProps {
   isOpen: boolean;
@@ -35,6 +41,11 @@ export default function BrowserPanel({
   agentStepText,
   onUrlChange,
 }: BrowserPanelProps) {
+  const [tabs, setTabs] = useState<BrowserTab[]>([
+    { id: 'tab-1', url: initialUrl, title: 'GitHub' },
+  ]);
+  const [activeTabId, setActiveTabId] = useState<string>('tab-1');
+
   const [currentUrl, setCurrentUrl] = useState<string>(initialUrl);
   const [inputUrl, setInputUrl] = useState<string>(initialUrl);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -66,7 +77,6 @@ export default function BrowserPanel({
     return trimmed;
   };
 
-  // Sync geometry / bounds of the embedded WebContentsView to match this container exactly
   const syncBounds = useCallback(() => {
     if (!containerRef.current || typeof window === 'undefined') return;
     const api = (window as any).electronAPI?.browser;
@@ -82,7 +92,6 @@ export default function BrowserPanel({
     }
   }, []);
 
-  // Show / Hide and attach ResizeObserver when panel opens or closes
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const api = (window as any).electronAPI?.browser;
@@ -109,9 +118,7 @@ export default function BrowserPanel({
         }
       }
 
-      const ro = new ResizeObserver(() => {
-        syncBounds();
-      });
+      const ro = new ResizeObserver(() => syncBounds());
       ro.observe(containerRef.current);
       window.addEventListener('resize', syncBounds);
 
@@ -120,12 +127,11 @@ export default function BrowserPanel({
           setCurrentUrl(data.url);
           setInputUrl(data.url);
           onUrlChange?.(data.url);
+          setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, url: data.url, title: data.title || t.title } : t));
         }
       });
 
-      const cleanupBounds = api.onBoundsInvalidated?.(() => {
-        syncBounds();
-      });
+      const cleanupBounds = api.onBoundsInvalidated?.(() => syncBounds());
 
       return () => {
         ro.disconnect();
@@ -135,23 +141,19 @@ export default function BrowserPanel({
         api.hide?.();
       };
     }
-  }, [isOpen, initialUrl, onUrlChange, syncBounds]);
+  }, [isOpen, initialUrl, onUrlChange, syncBounds, activeTabId]);
 
-  // Sync bounds whenever panel width or fullscreen changes
   useEffect(() => {
     const t = setTimeout(syncBounds, 60);
     return () => clearTimeout(t);
   }, [panelWidth, isFullscreen, syncBounds]);
 
-  // Drag-to-resize listener
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizingRef.current) return;
       const newWidth = Math.max(380, Math.min(window.innerWidth - 60, window.innerWidth - e.clientX));
       setPanelWidth(newWidth);
-      try {
-        localStorage.setItem('browser_panel_width', String(newWidth));
-      } catch {}
+      try { localStorage.setItem('browser_panel_width', String(newWidth)); } catch {}
       syncBounds();
     };
 
@@ -183,9 +185,7 @@ export default function BrowserPanel({
     setIsFullscreen(false);
     const targetWidth = Math.max(380, Math.round(window.innerWidth * fraction));
     setPanelWidth(targetWidth);
-    try {
-      localStorage.setItem('browser_panel_width', String(targetWidth));
-    } catch {}
+    try { localStorage.setItem('browser_panel_width', String(targetWidth)); } catch {}
     setTimeout(syncBounds, 60);
   };
 
@@ -194,9 +194,33 @@ export default function BrowserPanel({
     setCurrentUrl(clean);
     setInputUrl(clean);
     onUrlChange?.(clean);
+    setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, url: clean, title: clean.replace(/^https?:\/\//, '').split('/')[0] } : t));
     const api = (window as any).electronAPI?.browser;
-    if (api) {
-      api.navigate(clean);
+    if (api) api.navigate(clean);
+  };
+
+  const handleSelectTab = (tab: BrowserTab) => {
+    setActiveTabId(tab.id);
+    setCurrentUrl(tab.url);
+    setInputUrl(tab.url);
+    const api = (window as any).electronAPI?.browser;
+    if (api) api.navigate(tab.url);
+  };
+
+  const handleNewTab = () => {
+    const newId = `tab-${Date.now()}`;
+    const newTab: BrowserTab = { id: newId, url: 'https://www.google.com', title: 'Google' };
+    setTabs(prev => [...prev, newTab]);
+    handleSelectTab(newTab);
+  };
+
+  const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
+    e.stopPropagation();
+    if (tabs.length === 1) return;
+    const remaining = tabs.filter(t => t.id !== tabId);
+    setTabs(remaining);
+    if (activeTabId === tabId) {
+      handleSelectTab(remaining[remaining.length - 1]);
     }
   };
 
@@ -205,21 +229,10 @@ export default function BrowserPanel({
     if (inputUrl) navigateTo(inputUrl);
   };
 
-  const handleBack = () => {
-    (window as any).electronAPI?.browser?.back?.();
-  };
-
-  const handleForward = () => {
-    (window as any).electronAPI?.browser?.forward?.();
-  };
-
-  const handleReload = () => {
-    (window as any).electronAPI?.browser?.reload?.();
-  };
-
-  const handleHome = () => {
-    navigateTo('https://github.com');
-  };
+  const handleBack = () => { (window as any).electronAPI?.browser?.back?.(); };
+  const handleForward = () => { (window as any).electronAPI?.browser?.forward?.(); };
+  const handleReload = () => { (window as any).electronAPI?.browser?.reload?.(); };
+  const handleHome = () => { navigateTo('https://github.com'); };
 
   if (!isOpen) return null;
 
@@ -242,10 +255,48 @@ export default function BrowserPanel({
         </div>
       )}
 
-      {/* Top Header: Nav, Clean Address Bar, Window Controls */}
+      {/* Top Header: Tabs Bar & Toolbar */}
       <div className="flex flex-col border-b border-[#2a2822] bg-[#1d1c18] shrink-0">
-        {/* Main Toolbar */}
-        <div className="flex items-center justify-between px-3.5 py-2.5 gap-2">
+        {/* OpenWork Multi-Tabs Bar */}
+        <div className="flex items-center px-2 pt-1.5 pb-0 space-x-1 overflow-x-auto no-scrollbar border-b border-[#25231e]">
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId;
+            return (
+              <div
+                key={tab.id}
+                onClick={() => handleSelectTab(tab)}
+                className={`group flex items-center space-x-1.5 px-3 py-1 rounded-t-lg text-xs cursor-pointer select-none transition-all border-t border-x ${
+                  isActive
+                    ? 'bg-[#141310] text-[#ece9e2] border-[#38352d] font-medium'
+                    : 'bg-[#181714] text-[#8c867a] border-transparent hover:bg-[#211f1a] hover:text-[#c4bfb4]'
+                }`}
+              >
+                <Globe className={`w-3 h-3 ${isActive ? 'text-[#cc785c]' : 'text-[#6b675e]'}`} />
+                <span className="truncate max-w-[120px]">{tab.title}</span>
+                {tabs.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleCloseTab(e, tab.id)}
+                    className="p-0.5 rounded hover:bg-[#38352d] text-[#6b675e] hover:text-[#ece9e2] opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            onClick={handleNewTab}
+            className="p-1 rounded-lg hover:bg-[#26241e] text-[#8c867a] hover:text-[#ece9e2] transition-colors"
+            title="Open New Tab"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Navigation Toolbar */}
+        <div className="flex items-center justify-between px-3 py-2 gap-2">
           {/* History Controls */}
           <div className="flex items-center space-x-1 shrink-0">
             <button
@@ -299,9 +350,8 @@ export default function BrowserPanel({
             </div>
           </form>
 
-          {/* Window & Width Adjustment Controls */}
+          {/* Width Adjustment & Window Controls */}
           <div className="flex items-center space-x-1 shrink-0">
-            {/* Quick Size Presets */}
             <div className="hidden sm:flex items-center bg-[#141310] border border-[#333028] rounded-lg p-0.5 space-x-0.5">
               <button
                 type="button"
@@ -311,7 +361,7 @@ export default function BrowserPanel({
                     ? 'bg-[#cc785c] text-white'
                     : 'text-[#8c867a] hover:text-[#ece9e2] hover:bg-[#26241e]'
                 }`}
-                title="Compact View (35% screen width)"
+                title="Compact (35%)"
               >
                 35%
               </button>
@@ -323,7 +373,7 @@ export default function BrowserPanel({
                     ? 'bg-[#cc785c] text-white'
                     : 'text-[#8c867a] hover:text-[#ece9e2] hover:bg-[#26241e]'
                 }`}
-                title="Half View (50% screen width)"
+                title="Half (50%)"
               >
                 50%
               </button>
@@ -335,7 +385,7 @@ export default function BrowserPanel({
                     ? 'bg-[#cc785c] text-white'
                     : 'text-[#8c867a] hover:text-[#ece9e2] hover:bg-[#26241e]'
                 }`}
-                title="Wide View (70% screen width)"
+                title="Wide (70%)"
               >
                 70%
               </button>
@@ -345,7 +395,7 @@ export default function BrowserPanel({
               type="button"
               onClick={() => setIsFullscreen((prev) => !prev)}
               className="p-1.5 rounded-lg hover:bg-[#2b2923] text-[#a09b8f] hover:text-[#ece9e2] transition-colors"
-              title={isFullscreen ? 'Restore Previous Width' : 'Maximize Fullscreen'}
+              title={isFullscreen ? 'Restore' : 'Maximize'}
             >
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
@@ -360,37 +410,12 @@ export default function BrowserPanel({
           </div>
         </div>
 
-        {/* Clean Shortcuts */}
-        <div className="flex items-center space-x-2 px-3.5 pb-2 text-[11px] overflow-x-auto no-scrollbar">
-          <button
-            type="button"
-            onClick={() => navigateTo('https://github.com')}
-            className="px-2.5 py-1 rounded-lg bg-[#26241e] hover:bg-[#302e26] border border-[#38352d] text-[#e0ded8] hover:text-white transition-all text-[11px]"
-          >
-            GitHub
-          </button>
-          <button
-            type="button"
-            onClick={() => navigateTo('https://www.google.com')}
-            className="px-2.5 py-1 rounded-lg bg-[#26241e] hover:bg-[#302e26] border border-[#38352d] text-[#e0ded8] hover:text-white transition-all text-[11px]"
-          >
-            Google
-          </button>
-          <button
-            type="button"
-            onClick={() => navigateTo('https://www.youtube.com')}
-            className="px-2.5 py-1 rounded-lg bg-[#26241e] hover:bg-[#302e26] border border-[#38352d] text-[#e0ded8] hover:text-white transition-all text-[11px]"
-          >
-            YouTube
-          </button>
-        </div>
-
-        {/* Active AI Agent Banner (Visible only when AI is actively performing browser actions) */}
+        {/* Active AI Agent Banner */}
         {(isAgentRunning || agentStepText) && (
           <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#cc785c]/20 border-t border-[#cc785c]/35 text-xs text-[#f2eee6] animate-in fade-in">
             <div className="flex items-center space-x-2 truncate">
               <Sparkles className="w-3.5 h-3.5 text-[#cc785c] animate-spin shrink-0" />
-              <span className="font-semibold text-[#cc785c]">AI Browser Action:</span>
+              <span className="font-semibold text-[#cc785c]">AI Action:</span>
               <span className="truncate text-[#e6e2d8] font-mono text-[11.5px]">
                 {agentStepText || agentTask || 'Executing task in browser...'}
               </span>
@@ -402,12 +427,11 @@ export default function BrowserPanel({
         )}
       </div>
 
-      {/* Main Viewport: OpenWork Embedded Native Browser View */}
+      {/* Main Viewport */}
       <div
         ref={containerRef}
         className="flex-1 w-full h-full bg-[#141310] relative overflow-hidden"
       >
-        {/* If running in standalone browser without Electron, show iframe fallback */}
         {typeof window !== 'undefined' && !(window as any).electronAPI?.browser && (
           <iframe
             src={currentUrl}

@@ -2009,6 +2009,8 @@ export async function POST(req: NextRequest) {
       composioMcpToken: bodyMcpToken,
       composioMcpRefreshToken: bodyMcpRefreshToken,
       workspaceMemory,
+      hasLocalBridge = false,
+      isElectron = false,
     } = await req.json();
 
     const { cloneNativeConnectors } = await import('@/lib/nativeConnectors');
