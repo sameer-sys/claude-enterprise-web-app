@@ -2392,7 +2392,9 @@ export async function POST(req: NextRequest) {
     };
 
     const isAccountQuery = detectIsAccountQuery(lastText, nluRoute.intent);
-    const isWriteTask = /(?:add|create|update|modify|edit|write|change|implement|commit|delete|remove|fix)\b/i.test(lastText);
+    const isWriteTask =
+      /(?:commit|push\s+to|save\s+to\s+file|write\s+to\s+file|create\s+file|update\s+file|modify\s+file|edit\s+file)\b/i.test(lastText) &&
+      /(?:repo|repository|branch|github|\.tsx?|\.jsx?|\.py|\.json|\.md|src\/|app\/)\b/i.test(lastText);
     let lastInspectedRepo = 'sameer-sys/claude-enterprise-desktop-app';
     let lastInspectedPath = 'src/app/page.tsx';
     let successfulWriteCalls = 0;
@@ -2669,7 +2671,7 @@ export async function POST(req: NextRequest) {
                   `- **Repository**: \`${lastInspectedRepo}\`\n` +
                   `- **File**: \`${lastInspectedPath}\`\n` +
                   `- **Commit**: [\`${commitSha}\`](${commitUrl})\n\n` +
-                  `The code has been written and saved directly into the repository.`,
+                  contentText,
                   detectedSkill,
                   toolContext
                 );
