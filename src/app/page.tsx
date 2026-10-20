@@ -800,7 +800,12 @@ export default function Home() {
               if (event.type === 'step' && event.step) {
                 const s = event.step;
                 setBrowserStepText(s.description);
-                if (s.url) setBrowserUrl(s.url);
+                if (s.url) {
+                  setBrowserUrl(s.url);
+                  try {
+                    (window as any).electronAPI?.browser?.navigate?.(s.url);
+                  } catch {}
+                }
                 const icon = s.action === 'complete' ? '✅' : s.action === 'error' ? '❌' : '⚡';
                 browserLogs += `${icon} **Step ${s.stepNumber} [${s.action.toUpperCase()}]:** ${s.description}\n`;
                 setSessions((prev) =>
