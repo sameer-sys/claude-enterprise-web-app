@@ -2614,6 +2614,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
     const isAccountQuery = detectIsAccountQuery(lastText, nluRoute.intent);
     const isWriteTask =
+      !/(?:run|execute|exec|shell|powershell|cmd|terminal|dir|ls|status|test|inspect|check|find|search|list)\b/i.test(lastText) &&
       /(?:commit|push|save|write|create|update|modify|edit|change|fix|add|implement|button|feature|toggle|resize|adjust|component)\b/i.test(lastText) &&
       (/(?:repo|repository|branch|github|\.tsx?|\.jsx?|\.py|\.json|\.md|src\/|app\/|file|files|panel|code|component|ui|button|page|css|html)\b/i.test(lastText) ||
        /(?:add\s+it|do\s+it|make\s+it|fix\s+it|change\s+it|update\s+it|commit\s+it)\b/i.test(lastText));
@@ -3105,7 +3106,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
       }
 
-      if (codeToCommit) {
+      if (codeToCommit && codeToCommit.length > 25000 && !codeToCommit.includes('Preview truncated')) {
         const updateToolName = 'create_or_update_file';
         const commitRes = await runAgentTool(updateToolName, {
           repo: lastInspectedRepo,
