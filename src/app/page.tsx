@@ -987,7 +987,7 @@ export default function Home() {
         }
       }
 
-      const reader = response.body?.getReader();
+      let reader = response.body?.getReader();
       if (!reader) throw new Error('No readable stream');
 
       const decoder = new TextDecoder();
@@ -1003,6 +1003,7 @@ export default function Home() {
         const lines = sseBuffer.split('\n');
         sseBuffer = lines.pop() || '';
 
+        let switchedReader = false;
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || !trimmed.startsWith('data: ')) continue;
@@ -1011,6 +1012,80 @@ export default function Home() {
 
           try {
             const data = JSON.parse(dataStr);
+
+            // Client-side local execution delegation (Desktop Bridge / Electron IPC)
+            if (data.type === 'client_tool_call') {
+              const toolNotice = `⚡ *Executing local action: ${data.name}...*`;
+              setSessions((prev) =>
+                prev.map((s) => {
+                  if (s.id !== activeSession.id) return s;
+                  return {
+                    ...s,
+                    messages: s.messages.map((m) =>
+                      m.id === assistantMessageId
+                        ? { ...m, content: (accumulatedContent ? accumulatedContent + '\n\n' : '') + toolNotice }
+                        : m
+                    ),
+                  };
+                })
+              );
+
+              let execResult = '';
+              try {
+                if (typeof window !== 'undefined' && (window as any).electronAPI?.executeLocalTool) {
+                  const ipcRes = await (window as any).electronAPI.executeLocalTool(data.name, data.args);
+                  execResult = ipcRes?.success
+                    ? (typeof ipcRes.result === 'string' ? ipcRes.result : JSON.stringify(ipcRes.result))
+                    : (ipcRes?.error || 'Local tool execution failed');
+                } else {
+                  const bRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: data.name, args: data.args }),
+                  });
+                  const bJson = await bRes.json();
+                  execResult = bJson.ok
+                    ? (typeof bJson.result === 'string' ? bJson.result : JSON.stringify(bJson.result))
+                    : (bJson.error || 'Bridge returned an error');
+                }
+              } catch (err: any) {
+                execResult = `Execution error: ${err?.message || err}`;
+              }
+
+              if (data.name === 'browser_navigate' && data.args?.url) {
+                setIsBrowserPanelOpen(true);
+                setBrowserUrl(data.args.url);
+                if (typeof window !== 'undefined' && (window as any).electronAPI?.browser?.navigate) {
+                  (window as any).electronAPI.browser.navigate(data.args.url);
+                }
+              }
+
+              const followUpBody = {
+                ...chatBody,
+                clientToolResult: {
+                  toolCallId: data.id,
+                  toolName: data.name,
+                  result: execResult,
+                  args: data.args,
+                },
+              };
+
+              const followUpRes = await fetch('/api/chat', {
+                method: 'POST',
+                headers: requestHeaders,
+                body: JSON.stringify(followUpBody),
+                signal: controller.signal,
+              });
+
+              if (followUpRes.ok && followUpRes.body) {
+                reader = followUpRes.body.getReader();
+                sseBuffer = '';
+                accumulatedContent = '';
+                switchedReader = true;
+                break;
+              }
+            }
+
             let hasUpdate = false;
             // Provider reasoning is intentionally ignored here. Only the
             // assistant's final user-facing content belongs in the transcript.
@@ -1047,6 +1122,7 @@ export default function Home() {
             // pass
           }
         }
+        if (switchedReader) continue;
       }
 
       // Safeguard: Ensure assistant response is never left blank

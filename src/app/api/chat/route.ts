@@ -789,20 +789,27 @@ async function runAgentTool(
     // Shell Command Execution (OpenWork Local Terminal Style)
     if (name === 'shell_command') {
       try {
-        const { exec } = await import('child_process');
         const cmd = String(args?.command || '').trim();
         const cwd = args?.cwd || process.cwd();
+
+        // If running in cloud environment without local bridge or native shell
+        if (process.env.VERCEL && !process.env.VERCEL_TOKEN && !process.env.VERCEL_OIDC_TOKEN) {
+          return `⚠️ Local Terminal Bridge not active. To execute shell commands on your PC, please run the Claude Enterprise Desktop App.`;
+        }
+
+        const { exec } = await import('child_process');
+        const shell = process.platform === 'win32' ? 'powershell.exe' : '/bin/sh';
         return await new Promise<string>((resolve) => {
-          exec(cmd, { cwd, timeout: 45000 }, (error, stdout, stderr) => {
+          exec(cmd, { cwd, shell, timeout: 45000 }, (error, stdout, stderr) => {
             if (error) {
-              resolve(`Command failed (code ${error.code || 1}):\n${stderr || error.message}\n${stdout}`);
+              resolve(`Command output (exit code ${error.code || 1}):\n${stderr || error.message}\n${stdout}`);
             } else {
               resolve(stdout || stderr || 'Command executed successfully.');
             }
           });
         });
       } catch (e: any) {
-        return `Shell execution error: ${e?.message || 'unknown error'}`;
+        return `⚠️ Local Terminal Bridge required: To execute "${args?.command || 'commands'}", please use the Claude Enterprise Desktop App with active local bridge.`;
       }
     }
 
@@ -2011,6 +2018,7 @@ export async function POST(req: NextRequest) {
       workspaceMemory,
       hasLocalBridge = false,
       isElectron = false,
+      clientToolResult,
     } = await req.json();
 
     const { cloneNativeConnectors } = await import('@/lib/nativeConnectors');
@@ -2160,6 +2168,26 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         };
       }),
     ];
+
+    if (clientToolResult && clientToolResult.toolCallId) {
+      fullMessages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: clientToolResult.toolCallId,
+          type: 'function',
+          function: {
+            name: clientToolResult.toolName,
+            arguments: typeof clientToolResult.args === 'string' ? clientToolResult.args : JSON.stringify(clientToolResult.args || {})
+          }
+        }]
+      });
+      fullMessages.push({
+        role: 'tool',
+        tool_call_id: clientToolResult.toolCallId,
+        content: typeof clientToolResult.result === 'string' ? clientToolResult.result : JSON.stringify(clientToolResult.result)
+      });
+    }
 
     const rawGemini = geminiKey || process.env.GEMINI_API_KEY;
     const activeGeminiKey = typeof rawGemini === 'string' && rawGemini.trim().length > 5
@@ -2915,6 +2943,57 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
           if (toolArgs?.repo) lastInspectedRepo = String(toolArgs.repo);
           if (toolArgs?.path) lastInspectedPath = String(toolArgs.path);
+
+          const isLocalTool =
+            toolName.startsWith('browser_') ||
+            toolName.startsWith('claude_') ||
+            toolName === 'shell_command' ||
+            toolName === 'workspace_read_file' ||
+            toolName === 'workspace_write_file';
+
+          // If client has local bridge or is in Electron, delegate local execution directly to client
+          if (isLocalTool && (hasLocalBridge || isElectron)) {
+            let directResult: string | null = null;
+            try {
+              const bRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: toolName, args: toolArgs }),
+                signal: AbortSignal.timeout(1500),
+              });
+              if (bRes.ok) {
+                const bData = await bRes.json();
+                if (bData.ok) {
+                  directResult = typeof bData.result === 'string' ? bData.result : JSON.stringify(bData.result);
+                }
+              }
+            } catch {}
+
+            if (directResult === null) {
+              // Yield client tool call to frontend via SSE!
+              return new Response(
+                new ReadableStream({
+                  start(controller) {
+                    const chunk = JSON.stringify({
+                      type: 'client_tool_call',
+                      id: call.id,
+                      name: toolName,
+                      args: toolArgs,
+                    });
+                    controller.enqueue(new TextEncoder().encode(`data: ${chunk}\n\n`));
+                    controller.close();
+                  }
+                }),
+                {
+                  headers: {
+                    'Content-Type': 'text/event-stream; charset=utf-8',
+                    'Cache-Control': 'no-cache, no-transform',
+                    'Connection': 'keep-alive',
+                  }
+                }
+              );
+            }
+          }
 
           const result = await runAgentTool(toolName, toolArgs, toolContext);
           currentTurnToolCount++;
