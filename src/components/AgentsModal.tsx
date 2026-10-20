@@ -40,7 +40,6 @@ interface AgentsModalProps {
 
 const CATEGORIES = [
   { id: 'all', label: 'All Agents (260+)' },
-  { id: 'executive', label: '👑 Executive & PMs' },
   { id: 'engineering', label: '🛠️ Engineering' },
   { id: 'devops', label: '🚀 DevOps & Cloud' },
   { id: 'ai', label: '🧠 AI & Data' },

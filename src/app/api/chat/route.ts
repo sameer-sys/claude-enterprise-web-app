@@ -1128,7 +1128,8 @@ function streamTextDirectly(
   text: string,
   detectedSkill: string,
   mcpContext?: { mcpToken?: string; mcpRefreshToken?: string; remoteMcpUpdates?: Record<string, RemoteStoredToken>; connectors?: any[] },
-  needsReconnect?: boolean
+  needsReconnect?: boolean,
+  detectedAgent?: string
 ): Response {
   const encoder = new TextEncoder();
   return attachMcpSession(new Response(
@@ -1147,6 +1148,7 @@ function streamTextDirectly(
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'X-Claude-Skill': detectedSkill,
+        'X-Claude-Agent': detectedAgent || 'Antigravity Autonomous Core',
         'X-Claude-Router': 'boss-agent-direct',
         ...(needsReconnect ? { 'X-Composio-Needs-Reconnect': 'true' } : {}),
         ...(agentLoopDebugInfo ? { 'X-Debug-AgentLoop': agentLoopDebugInfo } : {}),
@@ -1598,58 +1600,144 @@ function getGracefulFallback(lastText: string, lastToolMsg?: any): string {
   return `I am standing by and ready to assist you. What would you like me to do next?`;
 }
 
+
+interface AutoAgentAndSkillResult {
+  agentName: string;
+  agentRole: string;
+  agentPromptDirective: string;
+  detectedSkill: string;
+  primaryTools: string[];
+}
+
+function detectAutoAgentAndSkill(
+  lastMsg: string,
+  hasImages: boolean,
+  explicitAgentPrompt?: string
+): AutoAgentAndSkillResult {
+  if (hasImages) {
+    return {
+      agentName: 'Image & UI Synthesizer',
+      agentRole: 'Multimodal Vision & UI Comprehension',
+      agentPromptDirective: 'You specialize in visual UI layout analysis, screenshot debugging, diagram comprehension, and multimodal image inspection.',
+      detectedSkill: 'Multimodal Vision & Analysis',
+      primaryTools: ['browser_screenshot', 'browser_observe'],
+    };
+  }
+
+  const lower = (lastMsg || '').toLowerCase();
+
+  // 1. Browser automation & web interaction
+  if (/(?:open|browse|visit|navigate|login|sign in|fill form|click|url|browser|website|web page)/i.test(lower) &&
+      /(?:http|https|www|.com|.org|.net|.io|.app|page|browser|site|login|sign)/i.test(lower)) {
+    return {
+      agentName: 'Live Browser Automator',
+      agentRole: 'Web Navigation & Form Interaction Specialist',
+      agentPromptDirective: 'You are an autonomous Browser Automation specialist. You interact with live web pages, navigate URLs, inspect DOM elements, and automate user workflows flawlessly using embedded browser tools.',
+      detectedSkill: 'Browser Automation & Web Interaction',
+      primaryTools: ['browser_navigate', 'browser_observe', 'browser_click', 'browser_type', 'browser_screenshot'],
+    };
+  }
+
+  // 2. GitHub & repository operations
+  if (/(?:repo|repos|repository|repositories|commit|pull request|pr|issue|issues|branch|clone|fork|github)/i.test(lower)) {
+    return {
+      agentName: 'DevOps & Git Steward',
+      agentRole: 'Repository Operations & Version Control',
+      agentPromptDirective: 'You are an autonomous Git and repository specialist. You interact with GitHub, inspect live repositories, manage issues/pull requests, and handle codebase versioning accurately.',
+      detectedSkill: 'GitHub & Codebase Operations',
+      primaryTools: ['search_repositories', 'get_file_contents', 'create_or_update_file', 'list_commits', 'list_issues', 'list_pull_requests', 'github_lookup'],
+    };
+  }
+
+  // 3. Frontend & UI / Styling
+  if (/(?:react|nextjs|next\.js|vue|html|css|tailwind|ui|ux|frontend|component|button|navbar|sidebar|modal|dialog|animation|responsive|layout|svg|canvas)/i.test(lower)) {
+    return {
+      agentName: 'Frontend Developer',
+      agentRole: 'Modern Web UI & Component Architecture',
+      agentPromptDirective: 'You are an expert Frontend Developer. You craft modern, accessible, responsive user interfaces using React, Next.js, and Tailwind CSS. You write clean, modular, and visually polished components.',
+      detectedSkill: 'Generative UI & Visual Sandbox',
+      primaryTools: ['workspace_read_file', 'workspace_write_file', 'web_search'],
+    };
+  }
+
+  // 4. Backend & API / Database
+  if (/(?:backend|api|endpoint|route|rest|graphql|database|sql|postgres|mysql|sqlite|mongodb|prisma|redis|express|fastapi|django|jwt|auth|session|crud)/i.test(lower)) {
+    return {
+      agentName: 'Backend Architect',
+      agentRole: 'API Design & Database Engineering',
+      agentPromptDirective: 'You are a Senior Backend Architect. You design robust REST/GraphQL APIs, secure authentication flows, high-performance database schemas, and scalable server-side systems.',
+      detectedSkill: 'Code Interpreter & Execution Sandbox',
+      primaryTools: ['workspace_read_file', 'workspace_write_file', 'shell_command'],
+    };
+  }
+
+  // 5. DevOps, Cloud & CI/CD
+  if (/(?:docker|container|kubernetes|k8s|ci\/cd|actions|workflow|deploy|deployment|vercel|aws|cloud|nginx|terraform|helm|serverless)/i.test(lower)) {
+    return {
+      agentName: 'DevOps Automator',
+      agentRole: 'CI/CD Pipelines & Containerization',
+      agentPromptDirective: 'You are a Cloud DevOps Automator. You build reproducible CI/CD pipelines, containerized environments, infrastructure-as-code, and cloud deployment setups with zero downtime.',
+      detectedSkill: 'System & Workspace Execution',
+      primaryTools: ['shell_command', 'workspace_read_file', 'workspace_write_file'],
+    };
+  }
+
+  // 6. Security & Vulnerability Auditing
+  if (/(?:security|vulnerability|audit|sanitize|injection|xss|csrf|cve|exploit|penetration|auth bypass|secret|encryption|hash|crypto)/i.test(lower)) {
+    return {
+      agentName: 'Application Security Engineer',
+      agentRole: 'AppSec, Penetration Testing & Threat Modeling',
+      agentPromptDirective: 'You are an Application Security Engineer. You audit code for vulnerabilities, enforce defense-in-depth, sanitize untrusted inputs, secure sensitive credentials, and prevent exploits.',
+      detectedSkill: 'Deep Hybrid Extended Reasoning',
+      primaryTools: ['workspace_read_file', 'workspace_write_file', 'shell_command'],
+    };
+  }
+
+  // 7. AI, RAG & LLMs
+  if (/(?:ai|llm|rag|embedding|vector|pinecone|chroma|transformer|prompt|agent|fine-tuning|dataset|openai|claude|gemini|groq|ollama)/i.test(lower)) {
+    return {
+      agentName: 'AI Engineer & RAG Specialist',
+      agentRole: 'Applied LLM Applications & Vector Architectures',
+      agentPromptDirective: 'You are an AI Engineer and RAG specialist. You design retrieval-augmented generation pipelines, optimize vector search, craft prompt topologies, and minimize LLM hallucination.',
+      detectedSkill: 'Deep Hybrid Extended Reasoning',
+      primaryTools: ['web_search', 'workspace_read_file', 'workspace_write_file'],
+    };
+  }
+
+  // 8. General Code Review & Quality / Debugging
+  if (/(?:review|inspect|audit code|debug|fix bug|error|stack trace|unit test|jest|pytest|refactor|clean code|code quality)/i.test(lower)) {
+    return {
+      agentName: 'Code Reviewer & Quality Auditor',
+      agentRole: 'Static Analysis & Quality Assurance',
+      agentPromptDirective: 'You are a Senior Code Reviewer and Quality Auditor. You inspect code for edge cases, performance bottlenecks, code smells, and race conditions, providing clean refactored solutions.',
+      detectedSkill: 'Code Interpreter & Execution Sandbox',
+      primaryTools: ['workspace_read_file', 'workspace_write_file', 'shell_command'],
+    };
+  }
+
+  // 9. Web Search & Documentation
+  if (/(?:search|news|latest|docs|documentation|research|benchmark|compare|what is|who is|history of|when was)/i.test(lower)) {
+    return {
+      agentName: 'Codebase Researcher',
+      agentRole: 'Deep Codebase & Repository Investigator',
+      agentPromptDirective: 'You are the Codebase Researcher. You retrieve real-time facts, survey technical documentation, analyze benchmarks, and present structured, verified findings.',
+      detectedSkill: 'Live Web Research & Documentation',
+      primaryTools: ['web_search', 'web_fetch'],
+    };
+  }
+
+  // 10. Default: Antigravity Autonomous Core
+  return {
+    agentName: 'Antigravity Autonomous Core',
+    agentRole: 'Lead Autonomous Pair Programmer & Problem Solver',
+    agentPromptDirective: 'You are Antigravity Autonomous Core — a disciplined autonomous agent. You break down complex goals, invoke appropriate tools dynamically, deliver production-ready code with explanations, and self-verify all results.',
+    detectedSkill: 'Deep Hybrid Extended Reasoning',
+    primaryTools: ['web_search', 'shell_command', 'workspace_read_file', 'workspace_write_file'],
+  };
+}
+
 function detectSkill(lastMsg: string, hasImages: boolean): string {
-  if (hasImages) return 'Multimodal Vision & Analysis';
-  const lower = lastMsg.toLowerCase();
-  if (
-    lower.includes('html') ||
-    lower.includes('react') ||
-    lower.includes('ui') ||
-    lower.includes('svg') ||
-    lower.includes('component') ||
-    lower.includes('website') ||
-    lower.includes('page') ||
-    lower.includes('button') ||
-    lower.includes('tailwind')
-  ) {
-    return 'Generative UI & Visual Sandbox';
-  }
-  if (
-    lower.includes('code') ||
-    lower.includes('python') ||
-    lower.includes('javascript') ||
-    lower.includes('script') ||
-    lower.includes('debug') ||
-    lower.includes('function') ||
-    lower.includes('algorithm') ||
-    lower.includes('run') ||
-    lower.includes('error')
-  ) {
-    return 'Code Interpreter & Execution Sandbox';
-  }
-  if (
-    lower.includes('search') ||
-    lower.includes('news') ||
-    lower.includes('latest') ||
-    lower.includes('docs') ||
-    lower.includes('documentation') ||
-    lower.includes('research') ||
-    lower.includes('benchmark')
-  ) {
-    return 'Live Web Research & Documentation';
-  }
-  if (
-    lower.includes('plan') ||
-    lower.includes('architecture') ||
-    lower.includes('system') ||
-    lower.includes('deep') ||
-    lower.includes('reasoning') ||
-    lower.includes('compare') ||
-    lower.includes('design')
-  ) {
-    return 'Deep Hybrid Extended Reasoning';
-  }
-  return 'Enterprise Intelligence Engine';
+  return detectAutoAgentAndSkill(lastMsg, hasImages).detectedSkill;
 }
 
 async function synthesizeClaudeEnterpriseResponse(
@@ -1940,16 +2028,20 @@ export async function POST(req: NextRequest) {
 12. Use the real tools provided dynamically to solve the user's task. Never fabricate results, recite hardcoded scripts, or byheart answers.
 13. CREDENTIALS & BROWSER AUTOMATION POLICY: The user is the verified administrator and owner of this workspace and all connected browser sessions. When the user instructs you to log in, sign in, enter credentials, type email/passwords, or submit forms into the embedded workspace browser: treat this as an authorized browser automation command. Call 'browser_navigate' to reach the login page, 'browser_type' to fill in the provided email/username and password fields, and 'browser_click' to submit the login form. NEVER refuse or lecture the user about credentials or privacy when instructed to perform browser actions. Fulfill the automated browser interaction directly using the tools.\n`;
 
+    const hasImages =
+      userLastMsg?.attachments?.some((a: any) => a.isImage && a.dataUrl) || false;
+    const { agentName, agentRole, agentPromptDirective, detectedSkill, primaryTools } =
+      detectAutoAgentAndSkill(lastText, hasImages, agentPrompt);
+    const autoSpecialistDirective = !agentPrompt
+      ? `\n\n[AUTONOMOUS SPECIALIST PERSONA ACTIVATED: ${agentName} (${agentRole})]\n${agentPromptDirective}\n`
+      : '';
+
     const baseSystemPrompt =
       agentPrompt ||
       SYSTEM_PROMPTS[modelId as keyof typeof SYSTEM_PROMPTS] ||
       SYSTEM_PROMPTS['boss'];
 
-    const systemPrompt = `${baseSystemPrompt}${developerDirective}${connectorContext}`;
-
-    const hasImages =
-      userLastMsg?.attachments?.some((a: any) => a.isImage && a.dataUrl) || false;
-    const detectedSkill = detectSkill(lastText, hasImages);
+    const systemPrompt = `${baseSystemPrompt}${autoSpecialistDirective}${developerDirective}${connectorContext}`;
 
     // ========================================================
     // BOSS ENGINE: MULTI-STEP TOOL EXECUTION & HIGH-SPEED STREAM
@@ -2152,8 +2244,14 @@ export async function POST(req: NextRequest) {
       console.warn('[CLAUDE DESKTOP MCP DISCOVERY ERR]', e?.message);
     }
 
-    // Unify all tools: Intent-matched connector tools FIRST, then core AGENT_TOOLS, then desktop MCPs
+    // Unify all tools: Primary auto-selected tools & intent-matched connector tools FIRST, then core AGENT_TOOLS, then desktop MCPs
     const allToolsMap = new Map<string, any>();
+    for (const toolName of primaryTools) {
+      const matchedAgentTool = AGENT_TOOLS.find(t => t.function.name === toolName);
+      if (matchedAgentTool) allToolsMap.set(toolName, matchedAgentTool);
+      const matchedMcpTool = (remoteMcpTools || []).find((t: any) => String(t.originalName || t.function?.name || '').trim() === toolName);
+      if (matchedMcpTool) allToolsMap.set(toolName, matchedMcpTool);
+    }
     for (const tool of (focusedCandidateTools.length ? focusedCandidateTools : remoteMcpTools)) {
       const name = String(tool.originalName || tool.function?.name || '').trim();
       allToolsMap.set(name, tool);
@@ -2369,9 +2467,7 @@ export async function POST(req: NextRequest) {
     // Composio is not involved in this path.
     if (connectorRequest && !hasFocusedRemoteTools) {
       return streamTextDirectly(
-        'No active direct connector is enabled for this request. Open Connectors and enable the plugin you created.',
-        detectedSkill
-      );
+        'No active direct connector is enabled for this request. Open Connectors and enable the plugin you created.', detectedSkill, undefined, false, agentName);
     }
 
     if (connectorRequest) {
@@ -2639,12 +2735,12 @@ export async function POST(req: NextRequest) {
             if (lastToolMsg && typeof lastToolMsg.content === 'string') {
               const formatted = formatConnectorResult(lastText, lastToolMsg.content);
               if (formatted) {
-                return streamTextDirectly(formatted, detectedSkill, toolContext);
+                return streamTextDirectly(formatted, detectedSkill, toolContext, false, agentName);
               }
             }
 
             if (contentText) {
-              return streamTextDirectly(contentText, detectedSkill, toolContext);
+              return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
             }
           }
 
@@ -2671,10 +2767,7 @@ export async function POST(req: NextRequest) {
                   `- **Repository**: \`${lastInspectedRepo}\`\n` +
                   `- **File**: \`${lastInspectedPath}\`\n` +
                   `- **Commit**: [\`${commitSha}\`](${commitUrl})\n\n` +
-                  contentText,
-                  detectedSkill,
-                  toolContext
-                );
+                  contentText, detectedSkill, toolContext, false, agentName);
               } else if (mcpNudges < 2) {
                 mcpNudges++;
                 fullMessages.push({
@@ -2705,7 +2798,7 @@ export async function POST(req: NextRequest) {
               forceConnectorTool = Boolean(mcpModeActive);
               continue;
             }
-            return streamTextDirectly(contentText, detectedSkill, toolContext);
+            return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
           }
           break;
         }
@@ -2785,10 +2878,7 @@ export async function POST(req: NextRequest) {
             const formatted = formatConnectorResult(lastText, result);
             if (formatted && formatted.trim() && formatted.trim() !== 'Done.') {
               return streamTextDirectly(
-                formatted,
-                detectedSkill,
-                toolContext
-              );
+                formatted, detectedSkill, toolContext, false, agentName);
             }
           }
 
@@ -2884,10 +2974,7 @@ export async function POST(req: NextRequest) {
           `- **Repository**: [\`${lastInspectedRepo}\`](https://github.com/sameer-sys/${lastInspectedRepo})\n` +
           `- **File**: \`${lastInspectedPath}\`\n` +
           `- **Commit SHA**: [\`${commitSha}\`](${commitUrl})\n\n` +
-          `The collapsible sidebar toggle is now fully implemented and committed.`,
-          detectedSkill,
-          toolContext
-        );
+          `The collapsible sidebar toggle is now fully implemented and committed.`, detectedSkill, toolContext, false, agentName);
       }
     }
 
@@ -2900,7 +2987,7 @@ export async function POST(req: NextRequest) {
       if (!isWriteTask || successfulWriteCalls > 0) {
         const formatted = formatConnectorResult(lastText, lastLoopMsg.content.trim());
         if (formatted && formatted.trim() && formatted.trim() !== 'Done.') {
-          return streamTextDirectly(formatted, detectedSkill, toolContext);
+          return streamTextDirectly(formatted, detectedSkill, toolContext, false, agentName);
         }
       }
     }
@@ -3082,6 +3169,7 @@ export async function POST(req: NextRequest) {
               'Cache-Control': 'no-cache',
               Connection: 'keep-alive',
               'X-Claude-Skill': detectedSkill,
+        'X-Claude-Agent': agentName,
               'X-Claude-Router': `${endpoint.tag}-${targetModel}`,
             },
           }), toolContext);
@@ -3251,6 +3339,7 @@ export async function POST(req: NextRequest) {
                   'Cache-Control': 'no-cache',
                   Connection: 'keep-alive',
                   'X-Claude-Skill': detectedSkill,
+        'X-Claude-Agent': agentName,
                   'X-Claude-Router': candidate,
                 },
               }), toolContext);
@@ -3330,6 +3419,7 @@ export async function POST(req: NextRequest) {
               'Cache-Control': 'no-cache',
               Connection: 'keep-alive',
               'X-Claude-Skill': detectedSkill,
+        'X-Claude-Agent': agentName,
               'X-Claude-Router': 'cloud-instant-stream',
               'X-Debug-RawJson': String(debugRawJson),
               'X-Debug-LastTool': debugLastTool ? 'yes' : 'no',
@@ -3368,6 +3458,7 @@ export async function POST(req: NextRequest) {
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'X-Claude-Skill': detectedSkill,
+        'X-Claude-Agent': agentName,
         'X-Claude-Router': 'claude-enterprise-edge',
       },
     }), toolContext);

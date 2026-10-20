@@ -1133,6 +1133,23 @@ export default function ChatArea({
                     <>
 
 
+                      {!isUser && (msg.agentAssigned || msg.skillActivated) && (
+                        <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+                          {msg.agentAssigned && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#25231c] border border-[#3d392e] text-[11px] font-medium text-[#cc785c] shadow-sm">
+                              <Sparkles className="w-3 h-3 text-[#cc785c]" />
+                              {msg.agentAssigned}
+                            </span>
+                          )}
+                          {msg.skillActivated && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#22201a] border border-[#353228] text-[11px] font-mono text-[#a8a296] shadow-sm">
+                              <Zap className="w-3 h-3 text-amber-400" />
+                              {msg.skillActivated}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
                       {/* Main Markdown Body */}
                       <div className="markdown-body space-y-3 text-[14.5px] leading-relaxed text-[#ede8df]">
                         <ReactMarkdown

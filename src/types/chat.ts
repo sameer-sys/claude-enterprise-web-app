@@ -110,6 +110,7 @@ export interface Message {
   attachments?: Attachment[];
   isProactive?: boolean; // Sent autonomously by AI while user was away/offline
   skillActivated?: string; // Auto-skill triggered by Claude
+  agentAssigned?: string; // Auto-agent persona assigned dynamically
 }
 
 export interface Artifact {

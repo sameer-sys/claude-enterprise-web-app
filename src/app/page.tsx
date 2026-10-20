@@ -930,6 +930,7 @@ export default function Home() {
       }
 
       const activeSkill = response.headers.get('X-Claude-Skill') || undefined;
+      const activeAgent = response.headers.get('X-Claude-Agent') || activeSession.agentName || undefined;
 
       // Composio session expired: auto-open the one-click reconnect popup so
       // the user only has to click "Authorize" on the Composio page. Opened at
@@ -1001,6 +1002,7 @@ export default function Home() {
                             thinking: accumulatedThinking || m.thinking,
                             artifact,
                             skillActivated: activeSkill,
+                            agentAssigned: activeAgent,
                           }
                         : m
                     ),
