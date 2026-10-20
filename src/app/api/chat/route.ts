@@ -197,9 +197,33 @@ const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'workspace_save_memory',
+      description: 'Save an important persistent memory, user preference, project architecture rule, or repository fact that persists permanently across all future chat sessions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'Unique memory key or category (e.g. "repo_locations", "user_preferences", "architecture_decisions")' },
+          value: { type: 'string', description: 'The knowledge, rule, or preference to persist permanently' },
+        },
+        required: ['key', 'value'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'workspace_get_memory',
+      description: 'Retrieve all permanently saved memories, user preferences, and project facts across sessions.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
 ];
-
-
 
 function getSafeHttpUrl(raw: string): URL | null {
   try {
@@ -806,6 +830,46 @@ async function runAgentTool(
     }
 
     // Workspace File Writing
+        // Permanent Workspace Memory Saving
+    if (name === 'workspace_save_memory') {
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const memoryFile = path.join(process.cwd(), '.workspace_memory.json');
+        let memory: Record<string, string> = {};
+        try {
+          if (fs.existsSync(memoryFile)) {
+            memory = JSON.parse(fs.readFileSync(memoryFile, 'utf8'));
+          }
+        } catch {}
+        const key = String(args?.key || 'general').trim();
+        const value = String(args?.value || '').trim();
+        memory[key] = value;
+        try {
+          fs.writeFileSync(memoryFile, JSON.stringify(memory, null, 2), 'utf8');
+        } catch {}
+        return `Successfully saved permanent memory [${key}]: "${value}". This knowledge will persist permanently across all future chat sessions.`;
+      } catch (e: any) {
+        return `Memory save error: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    // Permanent Workspace Memory Retrieval
+    if (name === 'workspace_get_memory') {
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const memoryFile = path.join(process.cwd(), '.workspace_memory.json');
+        if (fs.existsSync(memoryFile)) {
+          const content = fs.readFileSync(memoryFile, 'utf8');
+          return `Permanent Workspace Memory:\n${content}`;
+        }
+        return 'No permanent custom memories stored yet.';
+      } catch (e: any) {
+        return `Memory read error: ${e?.message || 'unknown error'}`;
+      }
+    }
+
     if (name === 'workspace_write_file') {
       try {
         const fs = await import('fs');
@@ -1944,6 +2008,7 @@ export async function POST(req: NextRequest) {
       connectors = [],
       composioMcpToken: bodyMcpToken,
       composioMcpRefreshToken: bodyMcpRefreshToken,
+      workspaceMemory,
     } = await req.json();
 
     const { cloneNativeConnectors } = await import('@/lib/nativeConnectors');
@@ -2035,7 +2100,42 @@ export async function POST(req: NextRequest) {
       SYSTEM_PROMPTS[modelId as keyof typeof SYSTEM_PROMPTS] ||
       SYSTEM_PROMPTS['boss'];
 
-    const systemPrompt = `${baseSystemPrompt}${autoSpecialistDirective}${developerDirective}${connectorContext}`;
+        // Read permanent workspace memory
+    let permanentMemoryText = '';
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const memoryFile = path.join(process.cwd(), '.workspace_memory.json');
+      let storedMemory: Record<string, string> = {};
+      if (fs.existsSync(memoryFile)) {
+        try { storedMemory = JSON.parse(fs.readFileSync(memoryFile, 'utf8')); } catch {}
+      }
+      if (workspaceMemory && typeof workspaceMemory === 'object') {
+        storedMemory = { ...storedMemory, ...workspaceMemory };
+      }
+      const memoryEntries = Object.entries(storedMemory);
+      if (memoryEntries.length > 0) {
+        permanentMemoryText = memoryEntries.map(([k, v]) => `- [${k}]: ${v}`).join('\n');
+      }
+    } catch {}
+
+    const permanentMemoryContext = `\n\n=== PERMANENT WORKSPACE MEMORY & ARCHITECTURAL AWARENESS ===
+- Owner & Verified Administrator: Sameer (@sameer-sys)
+- Living Codebase Repositories:
+  * Desktop App (Electron): sameer-sys/claude-enterprise-desktop-app
+  * Web App (Vercel Cloud): sameer-sys/claude-enterprise-web-app
+  * Mobile App (Android APK): sameer-sys/claude-enterprise-mobile-apk
+- Local Machine Projects Path: C:\\Users\\Master\\sameer workspace\\projects
+- CI/CD Deployment: Commits pushed to branch 'main' trigger GitHub Actions ("Deploy Production to Vercel (Prebuilt)") and deploy live to production in ~60-90s.
+- Active Capabilities: Live GitHub MCP, Embedded Browser Automation, Local Shell & Workspace File I/O, Web Search, Real-Time Code Execution.
+- Autonomous Operating Principles:
+  1. Think & Plan before executing. Break down goals into verifiable steps.
+  2. Read files with tools before editing. Never guess file contents or structure.
+  3. Validate syntax before saving. Ensure code is complete with zero placeholders.
+  4. Communicate with clarity, markdown formatting, tables, and clickable links.
+${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${permanentMemoryText}\n` : ''}=== END WORKSPACE MEMORY ===\n`;
+
+    const systemPrompt = `${baseSystemPrompt}${autoSpecialistDirective}${permanentMemoryContext}${developerDirective}${connectorContext}`;
 
     // ========================================================
     // BOSS ENGINE: MULTI-STEP TOOL EXECUTION & HIGH-SPEED STREAM
