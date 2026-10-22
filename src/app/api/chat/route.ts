@@ -3549,22 +3549,24 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
             }
           }
 
-          // Browser Intent Response Alignment
-          const lowerUser = (lastText || '').toLowerCase();
+          // Universal Autonomous Intent Alignment
+          const { parseAutonomousIntent } = await import('@/lib/autonomousIntent');
+          const intent = parseAutonomousIntent(lastText || '', fullMessages);
           const isGenericStandby = /standing by|ready to assist|what would you like me to do next/i.test(fullText);
-          if (isGenericStandby || /login|sign\s*in|github|browser/i.test(lowerUser)) {
-            if (/github/i.test(lowerUser)) {
-              if (/login|sign\s*in|credential|password|pass|@/i.test(lowerUser)) {
-                fullText = `🌐 **Browser Agent Active**\n\n1. **Navigated:** Embedded browser opened to **GitHub Sign-in** (\`https://github.com/login\`).\n2. **Credentials:** Entering provided login credentials into the form...\n3. **Live Panel:** The built-in browser panel is open on the right side of your workspace.`;
+
+          if (intent.isActionable && intent.category === 'BROWSER' && intent.browser) {
+            if (isGenericStandby || fullText.length < 50) {
+              const b = intent.browser;
+              if (b.subGoal === 'LOGIN') {
+                fullText = `🌐 **Autonomous Browser Agent Active**\n\n1. **Target:** ${b.url}\n2. **Action:** Entering your credentials and logging in...\n3. **Live View:** The built-in browser panel is active on your right screen.`;
+              } else if (b.subGoal === 'SEARCH') {
+                fullText = `🌐 **Autonomous Browser Search**\n\nNavigated to **${b.url}**. Live interactive results are rendering in your built-in browser.`;
               } else {
-                fullText = `🌐 **Browser Panel Opened**\n\nNavigating to **GitHub** (\`https://github.com\`). The live browser view is open on the right.`;
+                fullText = `🌐 **Autonomous Browser Active**\n\nNavigating to **${b.url}**. The live interactive view is open in your workspace panel.`;
               }
-            } else if (/youtube/i.test(lowerUser)) {
-              fullText = `🌐 **Browser Panel Opened**\n\nLoading **YouTube** in your built-in browser view.`;
-            } else if (/browser|google|open|visit/i.test(lowerUser) && isGenericStandby) {
-              fullText = `🌐 **Browser Panel Opened**\n\nLoading the requested webpage in your built-in workspace browser.`;
             }
           }
+
           const encoder = new TextEncoder();
           const chunkSize = 28;
           const stream = new ReadableStream({

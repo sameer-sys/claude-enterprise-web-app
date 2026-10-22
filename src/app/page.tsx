@@ -11,6 +11,7 @@ import ProjectModal from '@/components/ProjectModal';
 import DownloadModal from '@/components/DownloadModal';
 import AgentsModal from '@/components/AgentsModal';
 import FeaturesModal from '@/components/FeaturesModal';
+import { parseAutonomousIntent } from '@/lib/autonomousIntent';
 import ApprovalModal, { PendingApproval } from '@/components/ApprovalModal';
 import { Session, Message, ModelId, Artifact, Project, Attachment, ThinkingBudget, CustomButton, OpenWorkAgent, ConnectorConfig, Connector } from '@/types/chat';
 
@@ -800,89 +801,40 @@ export default function Home() {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    // Comprehensive Auto-Detect for Browser Actions, Navigation & Credential Login
-    const lowerText = text.toLowerCase().trim();
-    const isBrowserRequest = (
-      lowerText.includes('browser') ||
-      lowerText.includes('github') ||
-      lowerText.includes('youtube') ||
-      lowerText.includes('google') ||
-      lowerText.includes('instagram') ||
-      lowerText.includes('twitter') ||
-      lowerText.includes('x.com') ||
-      lowerText.includes('reddit') ||
-      lowerText.includes('amazon') ||
-      lowerText.includes('website') ||
-      lowerText.includes('webpage') ||
-      lowerText.includes('login') ||
-      lowerText.includes('log in') ||
-      lowerText.includes('sign in') ||
-      lowerText.includes('signin') ||
-      lowerText.startsWith('open') ||
-      lowerText.startsWith('play') ||
-      lowerText.startsWith('browse') ||
-      lowerText.startsWith('visit') ||
-      lowerText.startsWith('go to') ||
-      lowerText.startsWith('navigate') ||
-      /\b(open|visit|navigate|browse|launch|go\s+to|check|log\s*in|sign\s*in)\b/i.test(lowerText) ||
-      /https?:\/\//i.test(text)
-    );
+    // World-Class Autonomous Intent & Entity Understanding Engine
+    const intent = parseAutonomousIntent(text, activeSession.messages);
 
-    if (isBrowserRequest) {
-      let target = 'https://www.google.com';
-      if (lowerText.includes('github')) {
-        target = /login|sign\s*in|pass|credential|mail|@/i.test(lowerText)
-          ? 'https://github.com/login'
-          : 'https://github.com';
-      } else if (lowerText.includes('youtube') || /\byt\b/i.test(lowerText)) {
-        const cleanQuery = text
-          .replace(/^(?:hey\s+)?(?:open|play|search\s+for|search)\s+(?:in\s+|on\s+)?(?:youtube|yt)\s*/i, '')
-          .replace(/(?:in|on)\s+(?:youtube|yt)\s*$/i, '')
-          .trim();
-        target = cleanQuery ? `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}` : 'https://www.youtube.com';
-      } else if (lowerText.includes('google')) {
-        const cleanQuery = text.replace(/^(?:search|google|open)\s+(?:for\s+)?/i, '').trim();
-        target = cleanQuery && cleanQuery !== 'google' ? `https://www.google.com/search?q=${encodeURIComponent(cleanQuery)}` : 'https://www.google.com';
-      } else {
-        const urlMatch = text.match(/https?:\/\/[^\s"'<>]+/i);
-        if (urlMatch) {
-          target = urlMatch[0];
-        } else if (lowerText.startsWith('open ') || lowerText.startsWith('browse ') || lowerText.startsWith('visit ') || lowerText.startsWith('go to ')) {
-          const dest = text.replace(/^(?:open|browse|visit|go\s+to)\s+/i, '').trim();
-          target = dest.includes('.') ? `https://${dest}` : `https://www.google.com/search?q=${encodeURIComponent(dest)}`;
-        }
-      }
-
-      setBrowserUrl(target);
+    if (intent.isActionable && intent.category === 'BROWSER' && intent.browser) {
+      const plan = intent.browser;
+      setBrowserUrl(plan.url);
       setIsBrowserPanelOpen(true);
-      setBrowserStepText(`Loading ${target} in built-in browser...`);
+      setBrowserStepText(plan.description);
 
       // 1. Notify Electron embedded browser to navigate
       try {
-        (window as any).electronAPI?.browser?.navigate?.(target);
+        (window as any).electronAPI?.browser?.navigate?.(plan.url);
       } catch (e) {}
 
       // 2. Notify local bridge to navigate
       fetch('http://127.0.0.1:48080/api/execute-tool', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'browser_navigate', args: { url: target } }),
+        body: JSON.stringify({ name: 'browser_navigate', args: { url: plan.url } }),
       }).catch(() => {});
 
-      // 3. Check for credentials in text or user history and auto-fill login forms
-      const emailMatch = text.match(/[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}/);
-      const passMatch = text.match(/(?:pass|password)[:\s]+([^\s]+)/i) || text.match(/10207860Sa@|[A-Za-z0-9!@#$%^&*()_+]{8,}/);
-
-      if (emailMatch || passMatch) {
-        const email = emailMatch ? emailMatch[0] : '';
-        const password = passMatch ? (passMatch[1] || passMatch[0]) : '';
+      // 3. Automated credential login execution
+      if (plan.subGoal === 'LOGIN' && plan.credentials && (plan.credentials.username || plan.credentials.password)) {
         setTimeout(() => {
           fetch('http://127.0.0.1:48080/api/execute-tool', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               name: 'browser_fill_login',
-              args: { email, password, submit: true }
+              args: {
+                email: plan.credentials?.username,
+                password: plan.credentials?.password,
+                submit: true,
+              },
             }),
           }).catch(() => {});
         }, 2200);
