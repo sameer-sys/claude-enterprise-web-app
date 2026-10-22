@@ -2613,13 +2613,12 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     };
 
     const isAccountQuery = detectIsAccountQuery(lastText, nluRoute.intent);
-    const isWriteTask =
-      !/(?:run|execute|exec|shell|powershell|cmd|terminal|dir|ls|status|test|inspect|check|find|search|list)\b/i.test(lastText) &&
-      /(?:commit|push|save|write|create|update|modify|edit|change|fix|add|implement|button|feature|toggle|resize|adjust|component)\b/i.test(lastText) &&
-      (/(?:repo|repository|branch|github|\.tsx?|\.jsx?|\.py|\.json|\.md|src\/|app\/|file|files|panel|code|component|ui|button|page|css|html)\b/i.test(lastText) ||
-       /(?:add\s+it|do\s+it|make\s+it|fix\s+it|change\s+it|update\s+it|commit\s+it)\b/i.test(lastText));
+    const isExplicitRepoWriteRequest =
+      /(?:commit|push\s+to|save\s+to\s+repo|update\s+(?:the|my)\s+(?:codebase|app|repo)|modify\s+(?:the|my)\s+(?:codebase|app|repo)|apply\s+to\s+src|in\s+src\/)/i.test(lastText) &&
+      !/(?:explain|how\s+to|write\s+a\s+script|example|sample|ping|latency)\b/i.test(lastText);
+    const isWriteTask = isExplicitRepoWriteRequest;
     let lastInspectedRepo = 'sameer-sys/claude-enterprise-desktop-app';
-    let lastInspectedPath = 'src/app/page.tsx';
+    let lastInspectedPath = '';
     let successfulWriteCalls = 0;
     let currentTurnToolCount = 0;
     let lastCurrentTurnToolResult: any = null;
@@ -2873,7 +2872,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
           if (contentText) {
             const codeBlockMatch = contentText.match(/```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]+?)```/);
-            if (codeBlockMatch && codeBlockMatch[1]?.trim() && (isWriteTask || lastInspectedPath)) {
+            if (codeBlockMatch && codeBlockMatch[1]?.trim() && isWriteTask && Boolean(lastInspectedPath)) {
               const extractedCode = codeBlockMatch[1].trim();
               if (extractedCode.length > 200 && successfulWriteCalls === 0) {
                 const writeToolName = 'create_or_update_file';

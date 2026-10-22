@@ -58,6 +58,11 @@ const SERVICE_DIRECTORY: Record<string, { home: string; login: string; search?: 
     login: 'https://accounts.google.com/signin',
     search: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
   },
+  wikipedia: {
+    home: 'https://www.wikipedia.org',
+    login: 'https://en.wikipedia.org/w/index.php?title=Special:UserLogin',
+    search: (q) => `https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(q)}`,
+  },
   linear: {
     home: 'https://linear.app',
     login: 'https://linear.app/login',
@@ -124,9 +129,12 @@ function extractEmail(text: string): string | undefined {
 function extractPassword(text: string, knownEmail?: string): string | undefined {
   const ignoredWords = new Set([
     'password', 'credentials', 'account', 'please', 'terminal', 'browser',
-    'github', 'google', 'youtube', 'restaurants', 'search', 'navigate', 'signin', 'login', 'javascript', 'typescript'
+    'github', 'google', 'youtube', 'wikipedia', 'restaurants', 'search', 'navigate',
+    'signin', 'login', 'javascript', 'typescript', 'machine', 'learning', 'python',
+    'script', 'concise', 'website', 'measure', 'response', 'time'
   ]);
 
+  // 1. Explicit indicator: "password: XYZ", "pwd 123", "secret is ABC"
   const afterPassMatch = text.match(/(?:pass(?:word)?|pwd|secret)(?:\s+is|\s*[:=]|\s+as|\s+to)?\s+([^\s]+)(?:\s+([^\s]+))?/i);
   if (afterPassMatch) {
     const candidate1 = afterPassMatch[1]?.replace(/['",.]/g, '').trim();
@@ -139,16 +147,20 @@ function extractPassword(text: string, knownEmail?: string): string | undefined 
     }
   }
 
-  const complexMatch = text.match(/\b([A-Za-z0-9!@#$%^&*()_+]{6,})\b/g);
-  if (complexMatch) {
-    for (const token of complexMatch) {
-      if (knownEmail && token.includes(knownEmail)) continue;
-      if (token.includes('@') && token.includes('.')) continue;
-      if (ignoredWords.has(token.toLowerCase())) continue;
-      const hasDigitOrSymbol = /[0-9!@#$%^&*()_+]/.test(token);
-      const isMixedCase = /[a-z]/.test(token) && /[A-Z]/.test(token);
-      if (hasDigitOrSymbol || isMixedCase) {
-        return token;
+  // 2. High-entropy token with digits or symbols (only if context has login or email)
+  const hasLoginContext = /\b(login|log\s+in|sign\s+in|signin|authenticate|auth|credentials)\b/i.test(text) || Boolean(knownEmail);
+  if (hasLoginContext) {
+    const tokens = text.split(/\s+/);
+    for (const rawToken of tokens) {
+      const clean = rawToken.replace(/^['"(<[]+|['")>\].,;:]+$/g, '');
+      if (clean.length < 6) continue;
+      if (knownEmail && (clean.includes(knownEmail) || knownEmail.includes(clean))) continue;
+      if (clean.includes('@') && clean.includes('.')) continue;
+      if (ignoredWords.has(clean.toLowerCase())) continue;
+      const hasDigit = /[0-9]/.test(clean);
+      const hasSymbol = /[!@#$%^&*()_+=\-{}\[\]:;<>?,./~`]/.test(clean);
+      if (hasDigit || hasSymbol) {
+        return clean;
       }
     }
   }
@@ -166,55 +178,10 @@ export function parseAutonomousIntent(
   const raw = String(userText || '').trim();
   const lower = raw.toLowerCase();
 
-  // Combine with recent turn context for follow-up resolution
-  const recentUserTurns = contextHistory
-    .filter((m) => m && m.role === 'user')
-    .slice(-4)
-    .map((m) => String(m.content || ''))
-    .join(' ');
-  const combined = `${recentUserTurns} ${raw}`.trim();
-  const lowerCombined = combined.toLowerCase();
-
-  // -------------------------------------------------------------
-  // 1. Identify URL or Domain Mentions
-  // -------------------------------------------------------------
-  const explicitUrlMatch = raw.match(/https?:\/\/[^\s"'<>]+/i) || recentUserTurns.match(/https?:\/\/[^\s"'<>]+/i);
-  const domainMatch = raw.match(/\b([a-zA-Z0-9-]+\.(?:com|org|io|dev|net|ai|app|co|so|in|gov|edu)(?:\/[^\s]*)?)\b/i) ||
-                      recentUserTurns.match(/\b([a-zA-Z0-9-]+\.(?:com|org|io|dev|net|ai|app|co|so|in|gov|edu)(?:\/[^\s]*)?)\b/i);
-
-  // -------------------------------------------------------------
-  // 2. Identify Target Service
-  // -------------------------------------------------------------
-  let matchedServiceKey: string | null = null;
-  for (const key of Object.keys(SERVICE_DIRECTORY)) {
-    const regex = new RegExp(`\\b${key}\\b`, 'i');
-    if (regex.test(lowerCombined)) {
-      matchedServiceKey = key;
-      break;
-    }
-  }
-
-  // -------------------------------------------------------------
-  // 3. Detect Action Types & Directives
-  // -------------------------------------------------------------
-  const hasBrowserDirective = (
-    /\b(browser|browse|navigate|open|visit|launch|go\s+to|pull\s+up|load|show|jump\s+on|check\s+on|view)\b/i.test(lower) ||
-    lower.includes('in the browser') ||
-    lower.includes('on browser') ||
-    lower.includes('cant see') ||
-    lower.includes('cant see open it') ||
-    Boolean(explicitUrlMatch) ||
-    Boolean(domainMatch) ||
-    Boolean(matchedServiceKey)
-  );
-
-  const hasLoginIntent = (
-    /\b(login|log\s+in|sign\s+in|signin|authenticate|auth|credentials|account)\b/i.test(lowerCombined) ||
-    (/\b(?:pass|password)\b/i.test(lowerCombined) && lowerCombined.includes('@'))
-  );
-
-  const hasSearchIntent = (
-    /\b(search|find|look\s+up)\b/i.test(lower) && !hasLoginIntent
+  // Pure coding or explanation prompt detection
+  const isPureCodingOrReasoning = (
+    /\b(write|create|implement|explain|how\s+to|what\s+is|why\s+does|script|code|function|algorithm)\b/i.test(lower) &&
+    !/\b(in\s+browser|in\s+the\s+browser|on\s+browser|open\s+in\s+browser|navigate\s+to|go\s+to|visit)\b/i.test(lower)
   );
 
   // Shell / CLI directive detection
@@ -223,10 +190,86 @@ export function parseAutonomousIntent(
     /^(?:npm|pnpm|yarn|npx|git|python|node|cargo|pip|docker|ls|dir|cd|cat|curl|netstat)\s+/i.test(raw)
   );
 
-  // -------------------------------------------------------------
+  if (hasShellDirective) {
+    const cleanCmd = raw.replace(/^(?:please\s+)?(?:run|execute|in\s+terminal|in\s+shell)\s*[:]?\s*/i, '').trim();
+    return {
+      isActionable: true,
+      category: 'SHELL',
+      confidence: 0.95,
+      reasoning: `Detected shell execution directive for command: ${cleanCmd}`,
+      shell: {
+        command: cleanCmd,
+        description: `Running terminal command: ${cleanCmd}`,
+      },
+    };
+  }
+
+  // 1. Identify URL or Domain Mentions in CURRENT turn
+  const explicitUrlMatchCurrent = raw.match(/https?:\/\/[^\s"'<>]+/i);
+  const domainMatchCurrent = raw.match(/\b([a-zA-Z0-9-]+\.(?:com|org|io|dev|net|ai|app|co|so|in|gov|edu)(?:\/[^\s]*)?)\b/i);
+
+  // 2. Identify Target Service in CURRENT turn
+  let matchedServiceKeyCurrent: string | null = null;
+  for (const key of Object.keys(SERVICE_DIRECTORY)) {
+    if (new RegExp(`\\b${key}\\b`, 'i').test(lower)) {
+      matchedServiceKeyCurrent = key;
+      break;
+    }
+  }
+
+  // Check if current turn is pure coding and has no URL, domain, or service
+  if (isPureCodingOrReasoning && !explicitUrlMatchCurrent && !domainMatchCurrent && !matchedServiceKeyCurrent) {
+    return {
+      isActionable: false,
+      category: 'CONVERSATION',
+      confidence: 0.95,
+      reasoning: 'Conversational coding or technical reasoning prompt.',
+    };
+  }
+
+  // Follow-up context handling
+  const recentUserTurns = contextHistory
+    .filter((m) => m && m.role === 'user')
+    .slice(-4)
+    .map((m) => String(m.content || ''))
+    .join(' ');
+  const isExplicitFollowUp = /\b(go\s+there|open\s+it|open|login|log\s+in|sign\s+in|now\s+do\s+it|proceed|continue|submit|cant\s+see|show\s+me)\b/i.test(lower);
+
+  const explicitUrlMatch = explicitUrlMatchCurrent || (isExplicitFollowUp ? recentUserTurns.match(/https?:\/\/[^\s"'<>]+/i) : null);
+  const domainMatch = domainMatchCurrent || (isExplicitFollowUp ? recentUserTurns.match(/\b([a-zA-Z0-9-]+\.(?:com|org|io|dev|net|ai|app|co|so|in|gov|edu)(?:\/[^\s]*)?)\b/i) : null);
+
+  let matchedServiceKey = matchedServiceKeyCurrent;
+  if (!matchedServiceKey && isExplicitFollowUp) {
+    for (const key of Object.keys(SERVICE_DIRECTORY)) {
+      if (new RegExp(`\\b${key}\\b`, 'i').test(recentUserTurns.toLowerCase())) {
+        matchedServiceKey = key;
+        break;
+      }
+    }
+  }
+
+  // 3. Detect Action Types & Directives
+  const hasBrowserDirective = (
+    /\b(browser|browse|navigate|open|visit|launch|go\s+to|pull\s+up|load|show|jump\s+on|check\s+on|view)\b/i.test(lower) ||
+    lower.includes('in the browser') ||
+    lower.includes('on browser') ||
+    lower.includes('cant see') ||
+    Boolean(explicitUrlMatch) ||
+    Boolean(domainMatch) ||
+    Boolean(matchedServiceKey)
+  );
+
+  const hasLoginIntent = (
+    /\b(login|log\s+in|sign\s+in|signin|authenticate|auth|credentials|account)\b/i.test(lower) ||
+    (/\b(?:pass|password)\b/i.test(lower) && lower.includes('@'))
+  );
+
+  const hasSearchIntent = (
+    /\b(search|find|look\s+up)\b/i.test(lower) && !hasLoginIntent
+  );
+
   // 4. Resolve Browser Action
-  // -------------------------------------------------------------
-  if (hasBrowserDirective && !hasShellDirective) {
+  if (hasBrowserDirective) {
     let targetUrl = 'https://www.google.com';
     let subGoal: AutonomousBrowserPlan['subGoal'] = 'NAVIGATE';
 
@@ -260,11 +303,11 @@ export function parseAutonomousIntent(
     }
 
     // Extract Credentials
-    const email = extractEmail(raw) || extractEmail(recentUserTurns);
-    const password = extractPassword(raw, email) || extractPassword(recentUserTurns, email);
+    const email = extractEmail(raw) || (isExplicitFollowUp ? extractEmail(recentUserTurns) : undefined);
+    const password = extractPassword(raw, email) || (isExplicitFollowUp ? extractPassword(recentUserTurns, email) : undefined);
     const credentials = (email || password) ? { username: email, password } : undefined;
 
-    if (credentials || hasLoginIntent) {
+    if (hasLoginIntent || (credentials && credentials.username)) {
       subGoal = 'LOGIN';
       if (matchedServiceKey && SERVICE_DIRECTORY[matchedServiceKey]?.login) {
         targetUrl = SERVICE_DIRECTORY[matchedServiceKey].login;
@@ -287,30 +330,11 @@ export function parseAutonomousIntent(
     };
   }
 
-  // -------------------------------------------------------------
-  // 5. Resolve Shell Action
-  // -------------------------------------------------------------
-  if (hasShellDirective) {
-    const cleanCmd = raw.replace(/^(?:please\s+)?(?:run|execute|in\s+terminal|in\s+shell)\s*[:]?\s*/i, '').trim();
-    return {
-      isActionable: true,
-      category: 'SHELL',
-      confidence: 0.95,
-      reasoning: `Detected shell execution directive for command: ${cleanCmd}`,
-      shell: {
-        command: cleanCmd,
-        description: `Running terminal command: ${cleanCmd}`,
-      },
-    };
-  }
-
-  // -------------------------------------------------------------
-  // 6. Conversational Reasoning
-  // -------------------------------------------------------------
+  // 5. Conversational Reasoning
   return {
     isActionable: false,
     category: 'CONVERSATION',
-    confidence: 0.88,
+    confidence: 0.92,
     reasoning: 'Input represents general knowledge, conversational dialogue, or programming reasoning.',
   };
 }
