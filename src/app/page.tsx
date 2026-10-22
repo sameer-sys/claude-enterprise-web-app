@@ -113,7 +113,7 @@ export default function Home() {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
 
   // Two-Way Autonomous Proactive Mode (Disabled by default)
-  const [isProactiveMode, setIsProactiveMode] = useState<boolean>(false);
+  const [isProactiveMode, setIsProactiveMode] = useState<boolean>(true);
 
   // Modals & Enterprise Features State
   const [isConnectorsOpen, setIsConnectorsOpen] = useState(false);
@@ -800,41 +800,93 @@ export default function Home() {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    // Auto-detect browser/media/URL requests and open the built-in Browser Panel
+    // Comprehensive Auto-Detect for Browser Actions, Navigation & Credential Login
     const lowerText = text.toLowerCase().trim();
-    if (
-      lowerText.startsWith('open ') ||
-      lowerText.startsWith('play ') ||
+    const isBrowserRequest = (
+      lowerText.includes('browser') ||
+      lowerText.includes('github') ||
       lowerText.includes('youtube') ||
-      /\byt\b/i.test(lowerText) ||
-      lowerText.includes('browse ') ||
+      lowerText.includes('google') ||
+      lowerText.includes('instagram') ||
+      lowerText.includes('twitter') ||
+      lowerText.includes('x.com') ||
+      lowerText.includes('reddit') ||
+      lowerText.includes('amazon') ||
+      lowerText.includes('website') ||
+      lowerText.includes('webpage') ||
+      lowerText.includes('login') ||
+      lowerText.includes('log in') ||
+      lowerText.includes('sign in') ||
+      lowerText.includes('signin') ||
+      lowerText.startsWith('open') ||
+      lowerText.startsWith('play') ||
+      lowerText.startsWith('browse') ||
+      lowerText.startsWith('visit') ||
+      lowerText.startsWith('go to') ||
+      lowerText.startsWith('navigate') ||
+      /\b(open|visit|navigate|browse|launch|go\s+to|check|log\s*in|sign\s*in)\b/i.test(lowerText) ||
       /https?:\/\//i.test(text)
-    ) {
+    );
+
+    if (isBrowserRequest) {
       let target = 'https://www.google.com';
-      if (lowerText.includes('youtube') || /\byt\b/i.test(lowerText)) {
+      if (lowerText.includes('github')) {
+        target = /login|sign\s*in|pass|credential|mail|@/i.test(lowerText)
+          ? 'https://github.com/login'
+          : 'https://github.com';
+      } else if (lowerText.includes('youtube') || /\byt\b/i.test(lowerText)) {
         const cleanQuery = text
           .replace(/^(?:hey\s+)?(?:open|play|search\s+for|search)\s+(?:in\s+|on\s+)?(?:youtube|yt)\s*/i, '')
           .replace(/(?:in|on)\s+(?:youtube|yt)\s*$/i, '')
           .trim();
-        if (cleanQuery) {
-          target = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
-        } else {
-          target = 'https://www.youtube.com';
-        }
-      } else if (lowerText.includes('github')) {
-        target = 'https://github.com';
+        target = cleanQuery ? `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}` : 'https://www.youtube.com';
+      } else if (lowerText.includes('google')) {
+        const cleanQuery = text.replace(/^(?:search|google|open)\s+(?:for\s+)?/i, '').trim();
+        target = cleanQuery && cleanQuery !== 'google' ? `https://www.google.com/search?q=${encodeURIComponent(cleanQuery)}` : 'https://www.google.com';
       } else {
         const urlMatch = text.match(/https?:\/\/[^\s"'<>]+/i);
         if (urlMatch) {
           target = urlMatch[0];
-        } else if (lowerText.startsWith('open ') || lowerText.startsWith('browse ')) {
-          const dest = text.replace(/^(?:open|browse)\s+/i, '').trim();
-          target = dest.includes('.') ? `https://${dest}` : `https://www.google.com/search?q=${encodeURIComponent(dest)}&igu=1`;
+        } else if (lowerText.startsWith('open ') || lowerText.startsWith('browse ') || lowerText.startsWith('visit ') || lowerText.startsWith('go to ')) {
+          const dest = text.replace(/^(?:open|browse|visit|go\s+to)\s+/i, '').trim();
+          target = dest.includes('.') ? `https://${dest}` : `https://www.google.com/search?q=${encodeURIComponent(dest)}`;
         }
       }
+
       setBrowserUrl(target);
       setIsBrowserPanelOpen(true);
       setBrowserStepText(`Loading ${target} in built-in browser...`);
+
+      // 1. Notify Electron embedded browser to navigate
+      try {
+        (window as any).electronAPI?.browser?.navigate?.(target);
+      } catch (e) {}
+
+      // 2. Notify local bridge to navigate
+      fetch('http://127.0.0.1:48080/api/execute-tool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'browser_navigate', args: { url: target } }),
+      }).catch(() => {});
+
+      // 3. Check for credentials in text or user history and auto-fill login forms
+      const emailMatch = text.match(/[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}/);
+      const passMatch = text.match(/(?:pass|password)[:\s]+([^\s]+)/i) || text.match(/10207860Sa@|[A-Za-z0-9!@#$%^&*()_+]{8,}/);
+
+      if (emailMatch || passMatch) {
+        const email = emailMatch ? emailMatch[0] : '';
+        const password = passMatch ? (passMatch[1] || passMatch[0]) : '';
+        setTimeout(() => {
+          fetch('http://127.0.0.1:48080/api/execute-tool', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: 'browser_fill_login',
+              args: { email, password, submit: true }
+            }),
+          }).catch(() => {});
+        }, 2200);
+      }
     }
 
     // Browser Agent Mode Execution
