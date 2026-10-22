@@ -217,8 +217,10 @@ export function parseAutonomousIntent(
     }
   }
 
+  const hasCurrentTarget = Boolean(explicitUrlMatchCurrent || domainMatchCurrent || matchedServiceKeyCurrent);
+
   // Check if current turn is pure coding and has no URL, domain, or service
-  if (isPureCodingOrReasoning && !explicitUrlMatchCurrent && !domainMatchCurrent && !matchedServiceKeyCurrent) {
+  if (isPureCodingOrReasoning && !hasCurrentTarget) {
     return {
       isActionable: false,
       category: 'CONVERSATION',
@@ -227,13 +229,13 @@ export function parseAutonomousIntent(
     };
   }
 
-  // Follow-up context handling
+  // Follow-up context handling (ONLY if current turn does NOT specify a new target)
   const recentUserTurns = contextHistory
     .filter((m) => m && m.role === 'user')
     .slice(-4)
     .map((m) => String(m.content || ''))
     .join(' ');
-  const isExplicitFollowUp = /\b(go\s+there|open\s+it|open|login|log\s+in|sign\s+in|now\s+do\s+it|proceed|continue|submit|cant\s+see|show\s+me)\b/i.test(lower);
+  const isExplicitFollowUp = !hasCurrentTarget && /\b(go\s+there|open\s+it|open\s+this|open|login|log\s+in|sign\s+in|now\s+do\s+it|proceed|continue|submit|cant\s+see|show\s+me)\b/i.test(lower);
 
   const explicitUrlMatch = explicitUrlMatchCurrent || (isExplicitFollowUp ? recentUserTurns.match(/https?:\/\/[^\s"'<>]+/i) : null);
   const domainMatch = domainMatchCurrent || (isExplicitFollowUp ? recentUserTurns.match(/\b([a-zA-Z0-9-]+\.(?:com|org|io|dev|net|ai|app|co|so|in|gov|edu)(?:\/[^\s]*)?)\b/i) : null);
