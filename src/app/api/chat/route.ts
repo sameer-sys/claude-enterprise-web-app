@@ -2182,6 +2182,7 @@ export async function POST(req: NextRequest) {
   2. Read files with tools before editing. Never guess file contents or structure.
   3. Validate syntax before saving. Ensure code is complete with zero placeholders.
   4. Communicate with clarity, markdown formatting, tables, and clickable links.
+  5. IMMEDIATE TURN COMPLETION (NO DEFERRALS): NEVER say "I've started the task", "I will reply back later", or "working on it in the background". You do NOT have a background thread. You MUST call your tools (workspace_read_file, workspace_write_file, shell_command, browser_navigate, create_or_update_file) IMMEDIATELY in THIS turn and return the real completed results right now.
 ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${permanentMemoryText}\n` : ''}=== END WORKSPACE MEMORY ===\n`;
 
     const systemPrompt = `${baseSystemPrompt}${autoSpecialistDirective}${permanentMemoryContext}${developerDirective}${connectorContext}`;
@@ -2655,7 +2656,11 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     const isExplicitRepoWriteRequest =
       /(?:commit|push\s+to|save\s+to\s+repo|update\s+(?:the|my)\s+(?:codebase|app|repo)|modify\s+(?:the|my)\s+(?:codebase|app|repo)|apply\s+to\s+src|in\s+src\/)/i.test(lastText) &&
       !/(?:explain|how\s+to|write\s+a\s+script|example|sample|ping|latency)\b/i.test(lastText);
-    const isWriteTask = isExplicitRepoWriteRequest;
+    const hasPriorWriteContext = messages.slice(-5).some((m: any) => 
+      m.role === 'user' && /(?:move|sidebar|button|change|fix|update|modify|add|create|implement|remove|ui)\b/i.test(m.content || '')
+    );
+    const isWriteIntent = /(?:commit|push|save|update|modify|change|move|add|create|build|implement|fix|refactor|remove|delete|toggle|replace|edit)\b/i.test(lastText) || hasPriorWriteContext;
+    const isWriteTask = (isExplicitRepoWriteRequest || isWriteIntent) && !/(?:explain|how\s+to|difference|meaning|what\s+is|tell\s+me\s+about)\b/i.test(lastText);
     let lastInspectedRepo = 'sameer-sys/claude-enterprise-desktop-app';
     let lastInspectedPath = '';
     let successfulWriteCalls = 0;
@@ -2936,13 +2941,16 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                   detectedSkill, toolContext, false, agentName
                 );
               }
-            } else if (isWriteTask && successfulWriteCalls === 0 && mcpNudges < 2) {
-              mcpNudges++;
-              fullMessages.push({
-                role: 'system',
-                content: 'Do NOT reply with explanation text alone. You must call create_or_update_file or workspace_write_file to actually apply and commit the changes end-to-end.'
-              });
-              continue;
+            } else {
+              const isDeferralText = /(?:started\s+the\s+task|reply\s+back|working\s+on\s+it|do\s+this\s+in\s+the\s+background|as\s+soon\s+as\s+.*complete|progressively\s+update|will\s+notify|leave\s+it\s+to\s+me)/i.test(contentText);
+              if ((isDeferralText || (isWriteTask && successfulWriteCalls === 0)) && mcpNudges < 3) {
+                mcpNudges++;
+                fullMessages.push({
+                  role: 'system',
+                  content: 'CRITICAL: You must NOT defer, speak in future tense, or say you will do it later. You do NOT have a background queue. You must immediately call workspace_read_file or get_file_contents, and workspace_write_file or create_or_update_file right now in this turn to execute and complete the task before responding.'
+                });
+                continue;
+              }
             }
 
             // For connector requests, especially compound requests, prose is
