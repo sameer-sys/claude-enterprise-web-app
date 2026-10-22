@@ -444,16 +444,36 @@ class LocalBridgeServer {
       });
     }
 
+    // Helper to resolve workspace paths to real repo
+    const resolveWorkspacePath = (relPath) => {
+      const path = require('path');
+      let clean = String(relPath || '').trim();
+      if (path.isAbsolute(clean) && !clean.includes('AppData\\Local\\Programs')) {
+        return clean;
+      }
+      clean = clean.replace(/^.*(?:Sameer AI Workspace|claude-enterprise-desktop-app)[\\/]/i, '');
+      const candidates = [
+        path.join('C:\\Users\\Master\\sameer workspace\\projects\\claude-enterprise-desktop-app', clean),
+        path.join('C:\\Users\\Master\\sameer workspace\\projects\\claude-enterprise-app', clean),
+        path.join('C:\\Users\\Master\\sameer workspace', clean),
+        path.resolve(clean),
+      ];
+      for (const c of candidates) {
+        if (fs.existsSync(c)) return c;
+      }
+      return candidates[0];
+    };
+
     // H. Workspace File Read
     if (name === 'workspace_read_file') {
-      const targetPath = path.resolve(args.path || '');
+      const targetPath = resolveWorkspacePath(args.path || '');
       if (!fs.existsSync(targetPath)) throw new Error(`File does not exist: ${targetPath}`);
       return fs.readFileSync(targetPath, 'utf8');
     }
 
     // I. Workspace File Write
     if (name === 'workspace_write_file') {
-      const targetPath = path.resolve(args.path || '');
+      const targetPath = resolveWorkspacePath(args.path || '');
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       fs.writeFileSync(targetPath, String(args.content || ''), 'utf8');
       return `File written successfully to ${targetPath}`;

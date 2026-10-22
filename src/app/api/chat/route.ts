@@ -2951,6 +2951,15 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
             toolName === 'workspace_read_file' ||
             toolName === 'workspace_write_file';
 
+          // Normalize workspace file paths to real desktop app repository
+          if (toolName === 'workspace_read_file' || toolName === 'workspace_write_file') {
+            const p = String(toolArgs?.path || '').trim();
+            if ((!p.startsWith('C:') && !p.startsWith('/')) || p.includes('AppData\\Local\\Programs')) {
+              const cleanRel = p.replace(/^.*(?:Sameer AI Workspace|claude-enterprise-desktop-app)[\\/]/i, '').replace(/^[\\/]+/, '');
+              toolArgs.path = `C:\\Users\\Master\\sameer workspace\\projects\\claude-enterprise-desktop-app\\${cleanRel.replace(/\//g, '\\')}`;
+            }
+          }
+
           // If client has local bridge or is in Electron, delegate local execution directly to client
           if (isLocalTool && (hasLocalBridge || isElectron)) {
             let directResult: string | null = null;
@@ -2959,7 +2968,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: toolName, args: toolArgs }),
-                signal: AbortSignal.timeout(1500),
+                signal: AbortSignal.timeout(15000),
               });
               if (bRes.ok) {
                 const bData = await bRes.json();
@@ -3042,9 +3051,16 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
           const isIntermediateRead = /get_file|read_file|list_directory|search_repositories|list_commits/i.test(String(toolName || ''));
           if (isWriteTask && isIntermediateRead) {
+            let targetFile = lastInspectedPath;
+            if (!targetFile) {
+              if (/sidebar/i.test(lastText)) targetFile = 'src/components/Sidebar.tsx';
+              else if (/chat|input|header/i.test(lastText)) targetFile = 'src/components/ChatArea.tsx';
+              else targetFile = 'src/app/page.tsx';
+              lastInspectedPath = targetFile;
+            }
             fullMessages.push({
               role: 'system',
-              content: `Files read successfully from ${lastInspectedRepo}/${lastInspectedPath}. Now proceed to call create_or_update_file or workspace_write_file to apply and commit the changes end-to-end. Do NOT output code in prose; call the write tool now.`
+              content: `Target file identified as ${lastInspectedRepo}/${targetFile}. Call get_file_contents for ${targetFile} or workspace_read_file, then call create_or_update_file or workspace_write_file with the updated code to apply the changes end-to-end. Do NOT repeat list_directory.`
             });
             continue;
           }
