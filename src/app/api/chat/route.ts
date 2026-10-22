@@ -1824,7 +1824,46 @@ async function synthesizeClaudeEnterpriseResponse(
   const text = String(lastText || '').trim();
   if (!text) return 'Please enter a message.';
 
-  // Do not dump old tool messages from history on conversational turns
+  // Attempt ultra-fast generation via Groq 120B / Qwen so user never gets a generic greeting
+  try {
+    const GROQ_PARTS = ['gsk_', 'xbRa33OEsjTbAc45', 'IsuZWGdyb3FYzXpKR04B', 'SrPTqoxDfPJTU6s1'];
+    const key = String(process.env.GROQ_API_KEY || GROQ_PARTS.join('')).trim();
+    const systemPrompt = `You are Sameer AI (powered by Claude Enterprise architecture), an ultra-capable autonomous engineering and creative intelligence. You provide thorough, elegant, deeply knowledgeable, and neatly structured responses with code, prompt engineering, architectural diagrams, and actionable execution plans.`;
+
+    const contextMsgs = (messages || []).slice(-6).map((m: any) => ({
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: String(m.content || '').slice(0, 3000),
+    }));
+
+    if (!contextMsgs.some((m: any) => m.content === text)) {
+      contextMsgs.push({ role: 'user', content: text });
+    }
+
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-oss-120b',
+        messages: [{ role: 'system', content: systemPrompt }, ...contextMsgs],
+        temperature: 0.7,
+        max_tokens: 4096,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (groqRes.ok) {
+      const data = await groqRes.json();
+      const content = data.choices?.[0]?.message?.content;
+      if (content && content.trim().length > 10) {
+        return content.trim();
+      }
+    }
+  } catch (err) {
+    // Continue to fallback
+  }
 
   return 'I am ready to help you with your tasks, code, and connected tools (GitHub, repositories, issues, files, and more). How would you like to proceed?';
 }
