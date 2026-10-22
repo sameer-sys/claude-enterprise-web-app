@@ -11,6 +11,7 @@ import ProjectModal from '@/components/ProjectModal';
 import DownloadModal from '@/components/DownloadModal';
 import AgentsModal from '@/components/AgentsModal';
 import FeaturesModal from '@/components/FeaturesModal';
+import ApprovalModal, { PendingApproval } from '@/components/ApprovalModal';
 import { Session, Message, ModelId, Artifact, Project, Attachment, ThinkingBudget, CustomButton, OpenWorkAgent, ConnectorConfig, Connector } from '@/types/chat';
 
 const DEFAULT_CUSTOM_BUTTONS: CustomButton[] = [
@@ -122,6 +123,7 @@ export default function Home() {
   const [isDownloadOpen, setIsDownloadOpen] = useState(false);
   const [isAgentsModalOpen, setIsAgentsModalOpen] = useState(false);
   const [isFeaturesOpen, setIsFeaturesOpen] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>(DEFAULT_CONNECTORS);
   const [geminiKey, setGeminiKey] = useState<string>('');
@@ -692,6 +694,58 @@ export default function Home() {
     }
     setIsStreaming(false);
   };
+
+  
+  // Listen for OpenWork Human-in-the-Loop Approval requests
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.approvals) {
+      const unsub = (window as any).electronAPI.approvals.onRequested((appr: PendingApproval) => {
+        setPendingApprovals((prev) => {
+          if (prev.some((p) => p.id === appr.id)) return prev;
+          return [...prev, appr];
+        });
+      });
+      return unsub;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:48080/api/approvals/pending');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ok && Array.isArray(data.pending)) {
+            setPendingApprovals(data.pending);
+          }
+        }
+      } catch (e) {}
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleRespondApproval = async (id: string, approved: boolean) => {
+    setPendingApprovals((prev) => prev.filter((p) => p.id !== id));
+    try {
+      if ((window as any).electronAPI?.approvals) {
+        await (window as any).electronAPI.approvals.respond(id, approved);
+      } else {
+        await fetch('http://127.0.0.1:48080/api/approvals/respond', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, approved }),
+        });
+      }
+    } catch (e) {}
+  };
+
+  // Auto-sync active session to SQLite persistent storage
+  useEffect(() => {
+    if (!activeSession || !activeSession.id) return;
+    fetch('http://127.0.0.1:48080/api/db/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(activeSession),
+    }).catch(() => {});
+  }, [activeSession?.messages?.length, activeSession?.title]);
 
   const handleSendMessage = async (text: string, attachments?: Attachment[], isBrowserMode?: boolean) => {
     if (isStreaming) {
@@ -1389,6 +1443,8 @@ export default function Home() {
         onClose={() => setIsAgentsModalOpen(false)}
         onSelectAgent={handleSelectAgent}
       />
+
+      <ApprovalModal pendingApprovals={pendingApprovals} onRespond={handleRespondApproval} />
 
       <FeaturesModal
         isOpen={isFeaturesOpen}
