@@ -63,6 +63,7 @@ interface SidebarProps {
   activeSessionTitle?: string;
   hasGeminiKey?: boolean;
   onOpenFeatures?: () => void;
+  onToggleCollapse?: () => void;
 }
 
 function formatRelativeTime(timestamp?: number, now = 0): string {
@@ -103,6 +104,7 @@ export default function Sidebar({
   activeSessionTitle,
   hasGeminiKey = false,
   onOpenFeatures,
+  onToggleCollapse,
 }: SidebarProps) {
   const [search, setSearch] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -160,6 +162,16 @@ export default function Sidebar({
               </div>
             </div>
           </div>
+          {onToggleCollapse && (
+            <button
+              onClick={onToggleCollapse}
+              aria-label="Collapse sidebar"
+              title="Collapse sidebar"
+              className="p-1.5 rounded-lg hover:bg-[#282621] text-[#9c978b] hover:text-[#ece9e2] transition-colors"
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Start New Chat Button */}

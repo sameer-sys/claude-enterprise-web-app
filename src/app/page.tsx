@@ -842,7 +842,44 @@ export default function Home() {
     }
 
     // Browser Agent Mode Execution
-    if (isBrowserMode || text.toLowerCase().startsWith('/browser')) {
+    // Contextual browser open handler
+    const isContextualBrowserDirective = /^(?:in\s+browser\s+open\s+it|open\s+it\s+in\s+browser|open\s+in\s+browser)\b/i.test(text.trim());
+    if (isBrowserMode || text.toLowerCase().startsWith('/browser') || isContextualBrowserDirective) {
+      let contextualTargetUrl = '';
+      if (isContextualBrowserDirective) {
+        const recentMessages = activeSession.messages.slice(-4);
+        for (const m of [...recentMessages].reverse()) {
+          const match = m.content.match(/https?:\/\/[^\s"'<>)]+/i);
+          if (match) {
+            contextualTargetUrl = match[0];
+            break;
+          }
+        }
+      }
+      if (contextualTargetUrl) {
+        setBrowserUrl(contextualTargetUrl);
+        setIsBrowserPanelOpen(true);
+        setBrowserStepText('Navigating workspace browser to ' + contextualTargetUrl);
+        try { (window as any).electronAPI?.browser?.navigate?.(contextualTargetUrl); } catch(e){}
+        fetch('http://127.0.0.1:48080/api/execute-tool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'browser_navigate', args: { url: contextualTargetUrl } })
+        }).catch(() => {});
+        // Also let the chat know
+        setIsStreaming(false);
+        const confirmationMsg: Message = {
+          id: initialAssistantMessage.id,
+          role: 'assistant',
+          content: 'Done! I have opened ' + contextualTargetUrl + ' in your workspace browser panel on the right.',
+          timestamp: Date.now(),
+          modelId: activeModel,
+        };
+        const updatedMsgs = [...activeSession.messages, userMessage, confirmationMsg];
+        
+        setSessions((prev) => prev.map((s) => (s.id === activeSession.id ? { ...s, messages: updatedMsgs } : s)));
+        return;
+      }
       setIsBrowserPanelOpen(true);
       const cleanTask = text.replace(/^\/browser\s*/i, '').trim();
       try {
@@ -1319,24 +1356,27 @@ export default function Home() {
           activeSessionTitle={activeSession.title}
           hasGeminiKey={Boolean(geminiKey)}
           onOpenFeatures={() => setIsFeaturesOpen(true)}
+          onToggleCollapse={() => setIsSidebarOpen(false)}
         />
       )}
 
       {/* Main Viewport */}
       <main className="flex-1 flex h-full overflow-hidden relative">
-        {/* Toggle Sidebar Button on Left Side */}
-        <button
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          className="absolute left-3 top-3 z-30 p-1.5 rounded-lg bg-[#282620]/80 hover:bg-[#38352d] text-[#8a8579] hover:text-[#ece9e2] border border-[#38352d] transition-all shadow-sm"
-          title={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect width="18" height="18" x="3" y="3" rx="2" />
-            <path d="M9 3v18" />
-            {isSidebarOpen ? <path d="m16 15-3-3 3-3" /> : <path d="m14 9 3 3-3 3" />}
-          </svg>
-        </button>
+        {/* Expand Sidebar Button (when sidebar is collapsed) */}
+        {!isSidebarOpen && (
+          <button
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Expand sidebar"
+            className="absolute left-3 top-3 z-30 p-1.5 rounded-lg bg-[#282620]/80 hover:bg-[#38352d] text-[#8a8579] hover:text-[#ece9e2] border border-[#38352d] transition-all shadow-sm md:flex hidden"
+            title="Expand sidebar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+              <path d="m14 9 3 3-3 3" />
+            </svg>
+          </button>
+        )}
         <ChatArea
           messages={activeSession.messages}
           activeModel={activeModel}
@@ -1371,6 +1411,7 @@ export default function Home() {
           hasGeminiKey={Boolean(geminiKey)}
           onToggleBrowserPanel={() => setIsBrowserPanelOpen((prev) => !prev)}
           isBrowserPanelOpen={isBrowserPanelOpen}
+          isSidebarOpen={isSidebarOpen}
         />
 
         {/* Built-in Browser Panel (OpenWork Style) */}

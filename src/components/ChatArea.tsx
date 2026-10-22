@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   ArrowUp,
+  PanelLeft,
   Square,
   Menu,
   Sparkles,
@@ -77,6 +78,7 @@ interface ChatAreaProps {
   hasGeminiKey?: boolean;
   onToggleBrowserPanel?: () => void;
   isBrowserPanelOpen?: boolean;
+  isSidebarOpen?: boolean;
 }
 
 export default function ChatArea({
@@ -111,6 +113,7 @@ export default function ChatArea({
   hasGeminiKey = false,
   onToggleBrowserPanel,
   isBrowserPanelOpen = false,
+  isSidebarOpen = true,
 }: ChatAreaProps) {
   const [input, setInput] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -842,7 +845,17 @@ export default function ChatArea({
     <div className="flex-1 flex flex-col h-full bg-[#1c1b18] relative overflow-hidden">
       {/* Top Navbar */}
       <header className="h-14 border-b border-[#2b2a24] bg-[#1c1b18]/95 backdrop-blur-md flex items-center justify-between px-4 z-10 shrink-0">
-        <div className="flex items-center space-x-3">
+        <div className={`flex items-center space-x-3 ${!isSidebarOpen ? 'pl-10' : ''}`}>
+          {!isSidebarOpen && (
+            <button
+              onClick={onOpenMobileSidebar}
+              aria-label="Expand sidebar"
+              title="Expand sidebar"
+              className="p-1.5 rounded-lg bg-[#282620]/80 hover:bg-[#38352d] text-[#8a8579] hover:text-[#ece9e2] border border-[#38352d] transition-all shadow-sm hidden md:flex items-center justify-center"
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={onOpenMobileSidebar}
             className="md:hidden p-2 rounded-lg hover:bg-[#282621] text-[#9c978b] hover:text-[#ece9e2]"
