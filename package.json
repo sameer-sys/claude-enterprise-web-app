@@ -1,6 +1,6 @@
 {
   "name": "sameer-ai-workspace",
-  "version": "1.0.0",
+  "version": "1.0.52",
   "description": "Sameer AI Workspace — Autonomous AI Assistant Desktop App",
   "private": true,
   "main": "electron/main.js",
