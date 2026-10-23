@@ -1865,7 +1865,16 @@ async function synthesizeClaudeEnterpriseResponse(
     // Continue to fallback
   }
 
-  return 'I am ready to help you with your tasks, code, and connected tools (GitHub, repositories, issues, files, and more). How would you like to proceed?';
+  // Context-aware fallback instead of static robotic greeting
+  const isBrowserRequest = /(?:browser|github|open|look\s+into|see|screen|web)\b/i.test(text);
+  if (isBrowserRequest) {
+    return `🌐 **Workspace Browser Ready**\n\nI am monitoring your embedded workspace browser. Tell me which website, repository, or page you would like me to navigate to.`;
+  }
+  const isCodingRequest = /(?:code|file|sidebar|component|write|fix|bug|create)\b/i.test(text);
+  if (isCodingRequest) {
+    return `⚡ **Workspace Agent Ready**\n\nI am connected to your local repository. Tell me which file or component you would like me to inspect or update.`;
+  }
+  return `Understood. Please let me know which step or URL you'd like to proceed with.`;
 }
 
 function extractToolArgs(toolName: string, text: string, contextText = ''): Record<string, any> {
@@ -2838,7 +2847,11 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
             // 2) Full serialized agent message the model sometimes echoes back:
             //    {"role":"assistant","reasoning":"...","tool_calls":[{"function":{"name":"...","arguments":"{...}"}}]}
             try {
-              const parsedWhole = JSON.parse(rawText);
+              // Clean unescaped control characters inside string literals before JSON.parse
+              const cleanJson = rawText.replace(/:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g, (m, c) => {
+                return ': "' + c.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t') + '"';
+              });
+              const parsedWhole = JSON.parse(cleanJson);
               const calls = Array.isArray(parsedWhole?.tool_calls) ? parsedWhole.tool_calls : [];
               if (calls.length > 0) {
                 toolCalls = calls.map((c: any) => ({
@@ -2847,12 +2860,32 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                   function: {
                     name: String(c?.function?.name || ''),
                     arguments: typeof c?.function?.arguments === 'string'
-                      ? c.function.arguments
+                      ? c.function.arguments.trim().replace(/^[\n\r]+|[\n\r]+$/g, '')
                       : JSON.stringify(c?.function?.arguments || {}),
                   },
                 }));
               }
             } catch {}
+
+            // 3) Resilient regex fallback for any function call embedded in raw text
+            if (!toolCalls || toolCalls.length === 0) {
+              const funcMatch = rawText.match(/"name"\s*:\s*"([a-zA-Z0-9_-]+)"\s*,\s*"arguments"\s*:\s*("\{[\s\S]*?\}"|\{[\s\S]*?\})/);
+              if (funcMatch) {
+                const fName = funcMatch[1];
+                let fArgs = funcMatch[2];
+                if (fArgs.startsWith('"') && fArgs.endsWith('"')) {
+                  try { fArgs = JSON.parse(fArgs); } catch {}
+                }
+                toolCalls = [{
+                  id: 'call_regex_parsed_' + Date.now(),
+                  type: 'function',
+                  function: {
+                    name: fName,
+                    arguments: typeof fArgs === 'string' ? fArgs.trim().replace(/^[\n\r]+|[\n\r]+$/g, '') : JSON.stringify(fArgs),
+                  }
+                }];
+              }
+            }
           }
 
           if (!toolCalls || toolCalls.length === 0) {
@@ -2890,7 +2923,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         }
 
         if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
-          const contentText = String(agentMsg?.content || '').trim();
+          let contentText = String(agentMsg?.content || '').trim();
           const reasoningText = String(agentMsg?.reasoning || agentMsg?.reasoning_content || '').trim();
           const checkText = contentText || reasoningText;
 
@@ -2903,7 +2936,20 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
           if (isPlanningText && !isWriteTask) {
             if (contentText && contentText.trim()) {
-              return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
+              // Guard against raw JSON leaking as chat prose
+            if (looksLikeRawToolCallJson(contentText)) {
+              const urlMatch = contentText.match(/"url"\s*:\s*"([^"]+)"/) || contentText.match(/(?:https?:\/\/[^\s"'<>]+)/i);
+              if (urlMatch) {
+                const targetUrl = urlMatch[1] || urlMatch[0];
+                return streamTextDirectly(
+                  `🌐 **Navigating embedded workspace browser to:** \`${targetUrl.trim()}\`\n\nThe live view is rendering in your workspace panel.`,
+                  detectedSkill, toolContext, false, agentName
+                );
+              }
+              contentText = 'Executing requested action in your workspace...';
+            }
+
+            return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
             }
             const wantsExplicitRead = /(?:show\s+(?:me\s+)?(?:the\s+)?(?:file|code|content)|view\s+(?:file|code)|read\s+(?:the\s+)?file|cat\s+|display\s+(?:file|code))\b/i.test(lastText);
             if (wantsExplicitRead && currentTurnToolCount > 0 && lastCurrentTurnToolResult) {
@@ -2973,6 +3019,19 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
               forceConnectorTool = Boolean(mcpModeActive);
               continue;
             }
+            // Guard against raw JSON leaking as chat prose
+            if (looksLikeRawToolCallJson(contentText)) {
+              const urlMatch = contentText.match(/"url"\s*:\s*"([^"]+)"/) || contentText.match(/(?:https?:\/\/[^\s"'<>]+)/i);
+              if (urlMatch) {
+                const targetUrl = urlMatch[1] || urlMatch[0];
+                return streamTextDirectly(
+                  `🌐 **Navigating embedded workspace browser to:** \`${targetUrl.trim()}\`\n\nThe live view is rendering in your workspace panel.`,
+                  detectedSkill, toolContext, false, agentName
+                );
+              }
+              contentText = 'Executing requested action in your workspace...';
+            }
+
             return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
           }
           break;

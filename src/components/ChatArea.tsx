@@ -127,6 +127,47 @@ export default function ChatArea({
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [interactionMode, setInteractionMode] = useState<'chat' | 'cowork'>('chat');
   const [isBrowserMode, setIsBrowserMode] = useState<boolean>(false);
+  const [updateInfo, setUpdateInfo] = useState<{ hasUpdate: boolean; latestVersion?: string; downloadUrl?: string; releaseNotes?: string } | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  useEffect(() => {
+    const check = async () => {
+      try {
+        let currentVer = '1.0.52';
+        if (typeof window !== 'undefined' && (window as any).electronAPI?.getVersion) {
+          const v = await (window as any).electronAPI.getVersion();
+          if (v) currentVer = v;
+        }
+        const res = await fetch(`/api/check-update?current=${encodeURIComponent(currentVer)}`);
+        const data = await res.json();
+        if (data?.hasUpdate) {
+          setUpdateInfo(data);
+        } else {
+          setUpdateInfo(null);
+        }
+      } catch {}
+    };
+    check();
+    const interval = setInterval(check, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleRestartToUpdate = async () => {
+    setIsUpdating(true);
+    try {
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.restartToUpdate) {
+        await (window as any).electronAPI.restartToUpdate(updateInfo?.downloadUrl);
+      } else if (updateInfo?.downloadUrl) {
+        window.open(updateInfo.downloadUrl, '_blank');
+      }
+    } catch (err) {
+      console.error('Update failed:', err);
+      if (updateInfo?.downloadUrl) window.open(updateInfo.downloadUrl, '_blank');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   // Downside Per-Session Connector Quick Edit State
   const [editingDownsideConn, setEditingDownsideConn] = useState<Connector | null>(null);
@@ -888,6 +929,19 @@ export default function ChatArea({
             <FileDown className="w-3.5 h-3.5 text-[#cc785c]" />
             <span className="hidden sm:inline">Export</span>
           </button>
+
+          {/* RESTART TO UPDATE PILL (ANTIGRAVITY STYLE) */}
+          {updateInfo?.hasUpdate && (
+            <button
+              onClick={handleRestartToUpdate}
+              disabled={isUpdating}
+              className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#0284c7] hover:bg-[#0369a1] active:bg-[#075985] text-white text-xs font-semibold shadow-md transition-all active:scale-95 animate-pulse"
+              title="Restart and update to the latest version"
+            >
+              <span>{isUpdating ? 'Updating...' : 'Restart to Update'}</span>
+              <span className="font-bold">→</span>
+            </button>
+          )}
 
           {/* OPENWORK CLOUD WEBSITE */}
           <a
