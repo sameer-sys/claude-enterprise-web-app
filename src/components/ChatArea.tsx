@@ -930,19 +930,6 @@ export default function ChatArea({
             <span className="hidden sm:inline">Export</span>
           </button>
 
-          {/* RESTART TO UPDATE PILL (ANTIGRAVITY STYLE) */}
-          {updateInfo?.hasUpdate && (
-            <button
-              onClick={handleRestartToUpdate}
-              disabled={isUpdating}
-              className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#0284c7] hover:bg-[#0369a1] active:bg-[#075985] text-white text-xs font-semibold shadow-md transition-all active:scale-95 animate-pulse"
-              title="Restart and update to the latest version"
-            >
-              <span>{isUpdating ? 'Updating...' : 'Restart to Update'}</span>
-              <span className="font-bold">→</span>
-            </button>
-          )}
-
           {/* OPENWORK CLOUD WEBSITE */}
           <a
             href="https://claude-enterprise-website-original.vercel.app"
