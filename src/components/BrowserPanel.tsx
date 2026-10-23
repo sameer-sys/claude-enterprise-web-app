@@ -114,7 +114,12 @@ export default function BrowserPanel({
           const target = normalizeUrl(initialUrl);
           setCurrentUrl(target);
           setInputUrl(target);
-          api.navigate(target);
+          api?.navigate?.(target);
+          fetch('http://127.0.0.1:48080/api/execute-tool', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'browser_navigate', args: { url: target } }),
+          }).catch(() => {});
         }
       }
 
