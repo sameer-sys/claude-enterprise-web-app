@@ -2469,8 +2469,13 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
       console.warn('[CLAUDE DESKTOP MCP DISCOVERY ERR]', e?.message);
     }
 
-    // Unify all tools: Primary auto-selected tools & intent-matched connector tools FIRST, then core AGENT_TOOLS, then desktop MCPs
+    // Unify all tools: Core AGENT_TOOLS (browser, files, shell) ALWAYS first, then connectors & desktop tools
     const allToolsMap = new Map<string, any>();
+    for (const tool of AGENT_TOOLS) {
+      if (!allToolsMap.has(tool.function.name)) {
+        allToolsMap.set(tool.function.name, tool);
+      }
+    }
     for (const toolName of primaryTools) {
       const matchedAgentTool = AGENT_TOOLS.find(t => t.function.name === toolName);
       if (matchedAgentTool) allToolsMap.set(toolName, matchedAgentTool);
@@ -2480,11 +2485,6 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     for (const tool of (focusedCandidateTools.length ? focusedCandidateTools : remoteMcpTools)) {
       const name = String(tool.originalName || tool.function?.name || '').trim();
       allToolsMap.set(name, tool);
-    }
-    for (const tool of AGENT_TOOLS) {
-      if (!allToolsMap.has(tool.function.name)) {
-        allToolsMap.set(tool.function.name, tool);
-      }
     }
     for (const tool of claudeDesktopTools) {
       if (!allToolsMap.has(tool.function.name)) {
@@ -2792,7 +2792,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         // Priority 2: OmniRoute (Local PC or Cloud Router, compact payload to prevent 413 token limit)
         if (!agentResp && canUseOmniRoute && (omniMasterKey || omniLocalUrl)) {
           try {
-            const compactTools = effectiveTools.slice(0, 12);
+            const compactTools = effectiveTools.slice(0, 36);
             const compactMessages = fullMessages.length > 8
               ? [fullMessages[0], ...fullMessages.slice(-7)]
               : fullMessages;
@@ -2821,7 +2821,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         // Priority 3: Groq Cloud (70B / 120B)
         if (!agentResp && groqKey) {
           try {
-            const compactTools = effectiveTools.slice(0, 10);
+            const compactTools = effectiveTools.slice(0, 36);
             agentResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
               headers: {
@@ -2895,27 +2895,53 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                 arguments: JSON.stringify(parsedArgs)
               }
             }];
+            if (agentMsg) agentMsg.content = '';
           } else {
             // 2) Full serialized agent message the model sometimes echoes back:
             //    {"role":"assistant","reasoning":"...","tool_calls":[{"function":{"name":"...","arguments":"{...}"}}]}
             try {
-              // Clean unescaped control characters inside string literals before JSON.parse
-              const cleanJson = rawText.replace(/:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g, (m, c) => {
-                return ': "' + c.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t') + '"';
-              });
-              const parsedWhole = JSON.parse(cleanJson);
+              let parsedWhole: any = null;
+              try {
+                parsedWhole = JSON.parse(rawText);
+              } catch {
+                const sanitized = rawText.replace(/[\u0000-\u001F]+/g, (match) => {
+                  if (match.includes('\n')) return '\\n';
+                  if (match.includes('\r')) return '\\r';
+                  if (match.includes('\t')) return '\\t';
+                  return ' ';
+                });
+                parsedWhole = JSON.parse(sanitized);
+              }
               const calls = Array.isArray(parsedWhole?.tool_calls) ? parsedWhole.tool_calls : [];
               if (calls.length > 0) {
-                toolCalls = calls.map((c: any) => ({
-                  id: c?.id || 'call_parsed_' + Date.now(),
-                  type: 'function',
-                  function: {
-                    name: String(c?.function?.name || ''),
-                    arguments: typeof c?.function?.arguments === 'string'
-                      ? c.function.arguments.trim().replace(/^[\n\r]+|[\n\r]+$/g, '')
-                      : JSON.stringify(c?.function?.arguments || {}),
-                  },
-                }));
+                toolCalls = calls.map((c: any) => {
+                  let fArgs = c?.function?.arguments;
+                  if (typeof fArgs === 'string') {
+                    try {
+                      const san = fArgs.replace(/[\u0000-\u001F]+/g, (m: string) => m.includes('\n') ? '\\n' : ' ');
+                      const parsed = JSON.parse(san);
+                      if (parsed && typeof parsed === 'object') {
+                        for (const k of Object.keys(parsed)) {
+                          if (typeof parsed[k] === 'string') parsed[k] = parsed[k].trim();
+                        }
+                        fArgs = JSON.stringify(parsed);
+                      }
+                    } catch {
+                      fArgs = fArgs.trim();
+                    }
+                  } else {
+                    fArgs = JSON.stringify(fArgs || {});
+                  }
+                  return {
+                    id: c?.id || 'call_parsed_' + Date.now(),
+                    type: 'function',
+                    function: {
+                      name: String(c?.function?.name || '').trim(),
+                      arguments: fArgs,
+                    },
+                  };
+                });
+                if (agentMsg) agentMsg.content = '';
               }
             } catch {}
 
@@ -2936,6 +2962,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                     arguments: typeof fArgs === 'string' ? fArgs.trim().replace(/^[\n\r]+|[\n\r]+$/g, '') : JSON.stringify(fArgs),
                   }
                 }];
+                if (agentMsg) agentMsg.content = '';
               }
             }
           }
@@ -3135,9 +3162,9 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
             }
           }
 
+          let directResult: string | null = null;
           // If client has local bridge or is in Electron, delegate local execution directly to client
           if (isLocalTool && (hasLocalBridge || isElectron)) {
-            let directResult: string | null = null;
             try {
               const bRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
                 method: 'POST',
@@ -3179,7 +3206,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
             }
           }
 
-          const result = await runAgentTool(toolName, toolArgs, toolContext);
+          const result = directResult !== null ? directResult : await runAgentTool(toolName, toolArgs, toolContext);
           currentTurnToolCount++;
           lastCurrentTurnToolResult = result;
           const toolFailed = isComposioExecutionFailure(result);
@@ -3731,6 +3758,45 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
           // tool-call JSON as plain text. Never stream that to the UI: replace
           // it with the formatted last real tool result from the agent loop.
           const debugRawJson = looksLikeRawToolCallJson(fullText);
+          if (debugRawJson) {
+            try {
+              let parsedWhole: any = null;
+              try { parsedWhole = JSON.parse(fullText); } catch {
+                const sanitized = fullText.replace(/[\u0000-\u001F]+/g, (m: string) => m.includes('\n') ? '\\n' : ' ');
+                parsedWhole = JSON.parse(sanitized);
+              }
+              const call = parsedWhole?.tool_calls?.[0] || parsedWhole;
+              const fName = call?.function?.name || call?.name || call?.tool;
+              let fArgs: any = call?.function?.arguments || call?.arguments || call?.params;
+              if (typeof fArgs === 'string') {
+                try {
+                  const san = fArgs.replace(/[\u0000-\u001F]+/g, (m: string) => m.includes('\n') ? '\\n' : ' ');
+                  fArgs = JSON.parse(san);
+                } catch {}
+              }
+              if (fName && fArgs && typeof fArgs === 'object') {
+                for (const k of Object.keys(fArgs)) {
+                  if (typeof fArgs[k] === 'string') fArgs[k] = fArgs[k].trim();
+                }
+                const bRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: fName, args: fArgs }),
+                  signal: AbortSignal.timeout(10000),
+                }).catch(() => null);
+                if (bRes && bRes.ok) {
+                  const bData = await bRes.json();
+                  fullText = bData?.result ? (typeof bData.result === 'string' ? bData.result : JSON.stringify(bData.result, null, 2)) : `Executed ${fName}`;
+                } else {
+                  const toolRes = await runAgentTool(fName, fArgs, toolContext).catch(() => null);
+                  if (toolRes) fullText = typeof toolRes === 'string' ? toolRes : JSON.stringify(toolRes, null, 2);
+                }
+              }
+            } catch (e: any) {
+              console.warn('[STAGE 4 TOOL EXEC ERR]', e?.message);
+            }
+          }
+
           const debugLastTool = [...fullMessages].reverse().find((m: any) => m && m.role === 'tool');
           if (debugRawJson && debugLastTool && typeof debugLastTool.content === 'string' && debugLastTool.content.trim()) {
             const formatted = formatConnectorResult(lastText, debugLastTool.content.trim());
