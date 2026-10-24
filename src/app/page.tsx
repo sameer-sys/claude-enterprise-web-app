@@ -882,6 +882,7 @@ export default function Home() {
         return;
       }
       setIsBrowserPanelOpen(true);
+      setBrowserScreenshot(undefined);
       const cleanTask = text.replace(/^\/browser\s*/i, '').trim();
       try {
         const browserResp = await fetch('/api/browser', {
