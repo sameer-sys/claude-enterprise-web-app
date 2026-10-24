@@ -116,9 +116,7 @@ export async function runBrowserTask(
     const groqKey = options.groqApiKey || process.env.GROQ_API_KEY || '';
     const geminiKey = options.geminiApiKey || process.env.GEMINI_API_KEY || '';
 
-    // Smart planning based on task content
-    const lower = task.toLowerCase();
-
+    // Route all requests through the same observe -> act -> verify agent loop.
     // Every request uses the same observe -> act -> verify agent loop.
     return await executeGenericAgentTask(page, task, emitStep, { groqKey, geminiKey, maxSteps });
   } catch (err: any) {
@@ -146,73 +144,6 @@ export async function runBrowserTask(
  * YouTube-specific human-like browser action flow:
  * Handles playlist creation, navigating to existing playlists, and adding videos.
  */
-async function executeYouTubeTask(
-  page: any,
-  task: string,
-  emitStep: (s: BrowserStep) => void
-): Promise<BrowserAgentResult> {
-  let stepNum = 2;
-
-  emitStep({
-    stepNumber: stepNum++,
-    action: 'navigate',
-    target: 'https://www.youtube.com',
-    description: 'Navigating to YouTube...',
-    timestamp: Date.now(),
-  });
-
-  await page.goto('https://www.youtube.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(2500);
-
-  // Take screenshot of landing
-  const screenshotBuf = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
-  const screenshotBase64 = screenshotBuf ? screenshotBuf.toString('base64') : undefined;
-
-  // Extract playlist name from task
-  const nameMatch =
-    task.match(/(?:named|called|title|name\s+it\s+as|name\s+it)\s*["'`]?([^"'`,\n]+)/i) ||
-    task.match(/playlist\s+["'`]?([a-zA-Z0-9_\-\s]+)["'`]?/i);
-  const targetPlaylistName = nameMatch ? nameMatch[1].trim() : 'My AI Playlist';
-
-  emitStep({
-    stepNumber: stepNum++,
-    action: 'navigate',
-    target: 'https://studio.youtube.com or YouTube UI',
-    description: `Opening YouTube Studio / Playlists manager for playlist: "${targetPlaylistName}"`,
-    screenshotBase64,
-    timestamp: Date.now(),
-  });
-
-  // Navigate to YouTube Playlists library
-  await page.goto('https://www.youtube.com/feed/playlists', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(2000);
-
-  const playlistScreenshot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
-
-  emitStep({
-    stepNumber: stepNum++,
-    action: 'click',
-    target: 'New playlist button',
-    description: `Checking YouTube Playlists. Target name: "${targetPlaylistName}"`,
-    screenshotBase64: playlistScreenshot ? playlistScreenshot.toString('base64') : undefined,
-    timestamp: Date.now(),
-  });
-
-  emitStep({
-    stepNumber: stepNum++,
-    action: 'complete',
-    description: `YouTube browser session active under your logged-in Google account. Playlist task: "${targetPlaylistName}".`,
-    timestamp: Date.now(),
-  });
-
-  return {
-    success: true,
-    task,
-    steps: [],
-    finalMessage: `Browser task executed on YouTube under your active profile for playlist: "${targetPlaylistName}". If you need to sign in for the first time, your browser window is open and your Google login will remain saved permanently.`,
-  };
-}
-
 /**
  * Generic multi-step browser LLM driver
  */
