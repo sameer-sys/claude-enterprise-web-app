@@ -82,6 +82,7 @@ export async function runBrowserTask(
 
   let context: any = null;
   let page: any = null;
+  let remoteBrowser: any = null;
 
   try {
     emitStep({
@@ -91,24 +92,28 @@ export async function runBrowserTask(
       timestamp: Date.now(),
     });
 
-    const execPath = getInstalledBrowserPath();
-
-    // Launch with persistent profile so Google / YouTube login stays saved forever
-    context = await chromium.launchPersistentContext(userDataDir, {
-      executablePath: execPath,
-      channel: !execPath ? 'chrome' : undefined,
-      headless: options.headless ?? false,
-      viewport: { width: 1280, height: 800 },
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-      args: [
-        '--disable-blink-features=AutomationControlled',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-      ],
-    });
-
-    const pages = context.pages();
-    page = pages.length > 0 ? pages[0] : await context.newPage();
+    const remoteEndpoint = process.env.BROWSER_WS_ENDPOINT?.trim();
+    if (process.env.VERCEL && !remoteEndpoint) {
+      throw new Error('Cloud browser is not configured. Set BROWSER_WS_ENDPOINT in Vercel to a managed Chromium CDP WebSocket endpoint, then redeploy. A serverless function cannot control Chrome on your laptop.');
+    }
+    if (remoteEndpoint) {
+      emitStep({ stepNumber: 2, action: 'wait', description: 'Connecting to the configured remote Chromium browser...', timestamp: Date.now() });
+      remoteBrowser = await chromium.connectOverCDP(remoteEndpoint, { timeout: 20000 });
+      context = remoteBrowser.contexts()[0] || await remoteBrowser.newContext({ viewport: { width: 1280, height: 800 } });
+      const pages = context.pages();
+      page = pages[0] || await context.newPage();
+    } else {
+      const execPath = getInstalledBrowserPath();
+      context = await chromium.launchPersistentContext(userDataDir, {
+        executablePath: execPath,
+        channel: !execPath ? 'chrome' : undefined,
+        headless: options.headless ?? false,
+        viewport: { width: 1280, height: 800 },
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      });
+      const pages = context.pages();
+      page = pages[0] || await context.newPage();
+    }
 
     // System prompt explaining browser tools to the model
     const groqKey = options.groqApiKey || process.env.GROQ_API_KEY || '';
@@ -140,9 +145,8 @@ export async function runBrowserTask(
       error: errorMsg,
     };
   } finally {
-    if (context && options.headless) {
-      await context.close().catch(() => {});
-    }
+    if (remoteBrowser) await remoteBrowser.close().catch(() => {});
+    else if (context && options.headless) await context.close().catch(() => {});
   }
 }
 
