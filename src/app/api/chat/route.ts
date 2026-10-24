@@ -90,6 +90,73 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'browser_new_tab',
+      description: 'Open a new browser tab beside existing tabs with a specified or blank website URL. Use whenever the user asks to open a new tab, open in a new tab, or open a fresh tab.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The complete website URL to load in the new tab (e.g. https://vercel.com or https://github.com)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_switch_tab',
+      description: 'Switch the active browser tab by tabId, index (1-based, e.g. 1 for first tab), or title/URL keyword search.',
+      parameters: {
+        type: 'object',
+        properties: {
+          tabId: { type: 'string', description: 'The unique ID of the tab to switch to' },
+          index: { type: 'number', description: '1-based index of the tab' },
+          query: { type: 'string', description: 'Keyword to match tab title or URL (e.g. "github", "vercel")' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_list_tabs',
+      description: 'List all currently open browser tabs with their IDs, URLs, page titles, and active status.',
+      parameters: {
+        type: 'object',
+        properties: {}
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_close_tab',
+      description: 'Close an open browser tab by tabId or index.',
+      parameters: {
+        type: 'object',
+        properties: {
+          tabId: { type: 'string', description: 'The ID of the tab to close' },
+          index: { type: 'number', description: '1-based index of the tab to close' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_get_links',
+      description: 'Extract all hyperlinks (<a> tags) from the active webpage with their visible text and full URL href. Automatically copies the matching link to the clipboard when the user asks to copy a link.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Optional search keyword to filter links by title or URL (e.g. "github", "web-app", "repo")' },
+          copyToClipboard: { type: 'boolean', description: 'Whether to copy the matched link to the clipboard. Defaults to true.' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'browser_navigate',
       description: 'Open or navigate the embedded workspace Chromium browser to a website URL (e.g. Google, GitHub, YouTube, documentation). Automatically observes and returns the live page title, URL, interactive clickable elements [e1, e2], and page text preview so you immediately see the page upon arrival.',
       parameters: {
@@ -733,6 +800,52 @@ async function runAgentTool(
       ).join('\n');
     }
 
+    // Embedded Browser Multi-Tab & Links Tools
+    if (name === 'browser_new_tab') {
+      try {
+        const { browserNewTab } = await import('@/lib/browserAutomation');
+        return await browserNewTab(args?.url);
+      } catch (e: any) {
+        return `Browser new tab failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'browser_switch_tab') {
+      try {
+        const { browserSwitchTab } = await import('@/lib/browserAutomation');
+        return await browserSwitchTab(args?.tabId, args?.index, args?.query);
+      } catch (e: any) {
+        return `Browser switch tab failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'browser_list_tabs') {
+      try {
+        const { browserListTabs } = await import('@/lib/browserAutomation');
+        return await browserListTabs();
+      } catch (e: any) {
+        return `Browser list tabs failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'browser_close_tab') {
+      try {
+        const { browserCloseTab } = await import('@/lib/browserAutomation');
+        return await browserCloseTab(args?.tabId, args?.index);
+      } catch (e: any) {
+        return `Browser close tab failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'browser_get_links') {
+      try {
+        const { browserGetLinks } = await import('@/lib/browserAutomation');
+        return await browserGetLinks(args?.query, args?.copyToClipboard);
+      } catch (e: any) {
+        return `Browser get links failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
     // Embedded Browser Automation Tools
     if (name === 'browser_navigate') {
       const url = String(args?.url || '').trim();
@@ -1314,6 +1427,10 @@ function isRawToolCallJson(text: string): boolean {
  */
 function looksLikeRawToolCallJson(text: string): boolean {
   const trimmed = String(text || '').trim();
+  // Catch tool calls wrapped in markdown code fences
+  if (trimmed.startsWith('```json') && /"(?:name|tool|browser_|workspace_|shell_|arguments)"/i.test(trimmed)) {
+    return true;
+  }
   if (
     trimmed.startsWith('```') ||
     trimmed.includes('```json') ||
@@ -2256,6 +2373,9 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
       { role: 'system', content: systemPrompt },
       ...messages.map((m: any) => {
         let content = m.content || '';
+        if (m.role === 'assistant' && typeof content === 'string' && looksLikeRawToolCallJson(content)) {
+          content = 'Action executed.';
+        }
         if (m.attachments && Array.isArray(m.attachments)) {
           for (const att of m.attachments) {
             if (att.contentSnippet) {

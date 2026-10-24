@@ -348,3 +348,143 @@ export async function browserScreenshot(): Promise<string> {
     return 'Screenshot captured and verified.';
   }
 }
+
+export async function browserNewTab(url?: string): Promise<string> {
+  const target = url ? (/^https?:\/\//i.test(url) ? url : `https://${url}`) : 'https://www.google.com';
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_new_tab', args: { url: target } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
+  const ports = [9222, 9224];
+  for (const port of ports) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(target)}`, { method: 'PUT' });
+      if (res.ok) {
+        const targetData = await res.json();
+        return `Opened new browser tab [${targetData.id}] at ${target}`;
+      }
+    } catch {}
+  }
+
+  return `Opened new tab at ${target}`;
+}
+
+export async function browserSwitchTab(tabId?: string, index?: number, query?: string): Promise<string> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_switch_tab', args: { tabId, index, query } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
+  return `Switched browser tab to ${tabId || index || query || 'next tab'}`;
+}
+
+export async function browserListTabs(): Promise<string> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_list_tabs', args: {} }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
+  const ports = [9222, 9224];
+  for (const port of ports) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json`);
+      if (res.ok) {
+        const targets = await res.json();
+        const pages = targets.filter((t: any) => t.type === 'page');
+        const list = pages.map((p: any, i: number) => `${i + 1}. "${p.title || 'Untitled'}" - ${p.url} (ID: ${p.id})`).join('\n');
+        return `Open Browser Tabs (${pages.length}):\n${list}`;
+      }
+    } catch {}
+  }
+
+  return 'No browser tabs active.';
+}
+
+export async function browserCloseTab(tabId?: string, index?: number): Promise<string> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_close_tab', args: { tabId, index } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
+  return `Closed browser tab ${tabId || index || ''}`;
+}
+
+export async function browserGetLinks(query?: string, copyToClipboard?: boolean): Promise<string> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_get_links', args: { query, copyToClipboard } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
+  const wsUrl = await getBrowserWsUrl();
+  if (!wsUrl) return 'Browser view not active for extracting links.';
+
+  const evalResult = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
+    expression: `(() => {
+      const allA = Array.from(document.querySelectorAll('a[href]'));
+      const results = [];
+      for (const a of allA) {
+        const href = a.href;
+        if (!href || !/^https?:/i.test(href)) continue;
+        const text = (a.innerText || a.getAttribute('aria-label') || a.title || '').trim();
+        results.push({ text: text.slice(0, 100), href });
+      }
+      return JSON.stringify({ title: document.title, url: window.location.href, links: results });
+    })()`,
+    returnByValue: true
+  });
+
+  try {
+    const parsed = JSON.parse(evalResult?.result?.value || '{}');
+    let matched = parsed.links || [];
+    if (query) {
+      const q = String(query).toLowerCase();
+      matched = matched.filter((l: any) => l.text.toLowerCase().includes(q) || l.href.toLowerCase().includes(q));
+    }
+    const displayList = matched.slice(0, 30).map((l: any, i: number) => `${i + 1}. [${l.text || 'Link'}] -> ${l.href}`).join('\n');
+    return `Extracted ${matched.length} links from "${parsed.title}" (${parsed.url}):\n${displayList || 'No links found matching query.'}`;
+  } catch {
+    return 'Could not parse page links.';
+  }
+}
+

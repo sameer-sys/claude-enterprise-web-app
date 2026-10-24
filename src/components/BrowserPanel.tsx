@@ -127,6 +127,22 @@ export default function BrowserPanel({
       ro.observe(containerRef.current);
       window.addEventListener('resize', syncBounds);
 
+      const cleanupTabs = api.onTabsUpdated?.((data: any) => {
+        if (Array.isArray(data?.tabs) && data.tabs.length > 0) {
+          setTabs(data.tabs.map((t: any) => ({
+            id: t.id || t.tabId,
+            url: t.url,
+            title: t.title || 'Tab',
+          })));
+          if (data.activeTabId) setActiveTabId(data.activeTabId);
+          if (data.url) {
+            setCurrentUrl(data.url);
+            setInputUrl(data.url);
+            onUrlChange?.(data.url);
+          }
+        }
+      });
+
       const cleanupNav = api.onNavigated?.((data: any) => {
         if (data?.url) {
           setCurrentUrl(data.url);
@@ -142,6 +158,7 @@ export default function BrowserPanel({
         ro.disconnect();
         window.removeEventListener('resize', syncBounds);
         cleanupNav?.();
+        cleanupTabs?.();
         cleanupBounds?.();
         api.hide?.();
       };
@@ -209,23 +226,37 @@ export default function BrowserPanel({
     setCurrentUrl(tab.url);
     setInputUrl(tab.url);
     const api = (window as any).electronAPI?.browser;
-    if (api) api.navigate(tab.url);
+    if (api) {
+      if (api.switchTab) api.switchTab(tab.id);
+      else if (api.selectTab) api.selectTab(tab.id);
+      else api.navigate(tab.url);
+    }
   };
 
   const handleNewTab = () => {
-    const newId = `tab-${Date.now()}`;
-    const newTab: BrowserTab = { id: newId, url: 'https://www.google.com', title: 'Google' };
-    setTabs(prev => [...prev, newTab]);
-    handleSelectTab(newTab);
+    const api = (window as any).electronAPI?.browser;
+    if (api?.newTab || api?.createTab) {
+      (api.newTab || api.createTab)('https://www.google.com');
+    } else {
+      const newId = `tab-${Date.now()}`;
+      const newTab: BrowserTab = { id: newId, url: 'https://www.google.com', title: 'Google' };
+      setTabs(prev => [...prev, newTab]);
+      handleSelectTab(newTab);
+    }
   };
 
   const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
     e.stopPropagation();
-    if (tabs.length === 1) return;
-    const remaining = tabs.filter(t => t.id !== tabId);
-    setTabs(remaining);
-    if (activeTabId === tabId) {
-      handleSelectTab(remaining[remaining.length - 1]);
+    const api = (window as any).electronAPI?.browser;
+    if (api?.closeTab) {
+      api.closeTab(tabId);
+    } else {
+      if (tabs.length === 1) return;
+      const remaining = tabs.filter(t => t.id !== tabId);
+      setTabs(remaining);
+      if (activeTabId === tabId) {
+        handleSelectTab(remaining[remaining.length - 1]);
+      }
     }
   };
 
