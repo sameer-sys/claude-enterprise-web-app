@@ -154,10 +154,15 @@ export async function browserClick(ref?: string, selector?: string): Promise<str
         const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
         const visible = candidates.filter(el => {
           const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
+          const style = window.getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
         });
-        const idx = parseInt(String(${JSON.stringify(ref || '')}).replace(/^e/i, '')) - 1;
-        target = visible[idx];
+        const match = /^e([1-9]\\d*)$/i.exec(String(${JSON.stringify(ref || '')}).trim());
+        if (!match) return 'Invalid element reference. Run browser_observe and use a reference such as e1.';
+        target = visible[Number(match[1]) - 1];
+        if (target && (target.disabled || target.getAttribute('aria-disabled') === 'true')) {
+          return 'The referenced element is disabled.';
+        }
       }
       if (!target) return "Element not found on page";
 
@@ -190,7 +195,7 @@ export async function browserClick(ref?: string, selector?: string): Promise<str
     });
     if (pageState?.result?.value) {
       const parsed = JSON.parse(pageState.result.value);
-      return `${clickedText}. Current Page: "${parsed.title}" (${parsed.url})`;
+      return `${clickedText}. Current Page: "${parsed.title}" (${parsed.url}). Re-observe the page to verify the intended outcome before reporting the task complete.`;
     }
   } catch {}
 
@@ -207,11 +212,29 @@ export async function browserType(text: string, ref?: string, selector?: string,
       if (${JSON.stringify(selector || null)}) {
         target = document.querySelector(${JSON.stringify(selector || '')});
       } else if (${JSON.stringify(ref || null)}) {
-        const candidates = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"]'));
-        const idx = parseInt(String(${JSON.stringify(ref || '')}).replace(/^e/i, '')) - 1;
-        target = candidates[idx] || document.querySelector('input, textarea');
+        const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
+        const visible = candidates.filter(el => {
+          const r = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+        });
+        const match = /^e([1-9]\\d*)$/i.exec(String(${JSON.stringify(ref || '')}).trim());
+        if (!match) return 'Invalid element reference. Run browser_observe and use a reference such as e1.';
+        target = visible[Number(match[1]) - 1];
       } else {
-        target = document.activeElement || document.querySelector('input, textarea');
+        const active = document.activeElement;
+        const isEditable = node => node && (node.matches('input:not([type="hidden"]), textarea, [contenteditable="true"]') || node.isContentEditable);
+        target = isEditable(active) ? active : Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea, [contenteditable="true"]')).find(node => {
+          const r = node.getBoundingClientRect();
+          const style = window.getComputedStyle(node);
+          return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !node.disabled;
+        });
+      }
+      if (target && !(target.matches('input:not([type="hidden"]), textarea, [contenteditable="true"]') || target.isContentEditable)) {
+        return 'The referenced element is not an editable text field. Run browser_observe and choose an input, textarea, or editable area.';
+      }
+      if (target && (target.disabled || target.readOnly || target.getAttribute('aria-disabled') === 'true')) {
+        return 'The referenced input is disabled or read-only.';
       }
       if (target) {
         target.focus();
@@ -225,12 +248,15 @@ export async function browserType(text: string, ref?: string, selector?: string,
         }
         target.dispatchEvent(new Event('input', { bubbles: true }));
         target.dispatchEvent(new Event('change', { bubbles: true }));
+        const expected = ${JSON.stringify(text)};
+        const actual = target.value !== undefined ? String(target.value) : String(target.innerText || '');
+        if (actual !== expected) return 'Typing verification failed: the selected field does not contain the requested text. Re-observe the page and retry with the correct input reference.';
         if (${Boolean(pressEnter)}) {
           target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
           const form = target.closest('form');
           if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         }
-        return "Typed: " + ${JSON.stringify(text)};
+        return "Typed and verified: " + ${JSON.stringify(text)};
       }
       return "No editable input found";
     })()`,
