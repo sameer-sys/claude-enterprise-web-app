@@ -29,6 +29,7 @@ interface BrowserPanelProps {
   agentTask?: string;
   isAgentRunning?: boolean;
   agentStepText?: string;
+  screenshotDataUrl?: string;
   onUrlChange?: (url: string) => void;
 }
 
@@ -39,6 +40,7 @@ export default function BrowserPanel({
   agentTask,
   isAgentRunning = false,
   agentStepText,
+  screenshotDataUrl,
   onUrlChange,
 }: BrowserPanelProps) {
   const [tabs, setTabs] = useState<BrowserTab[]>([
@@ -468,14 +470,16 @@ export default function BrowserPanel({
         ref={containerRef}
         className="flex-1 w-full h-full bg-[#141310] relative overflow-hidden"
       >
-        {typeof window !== 'undefined' && !(window as any).electronAPI?.browser && (
+        {typeof window !== 'undefined' && !(window as any).electronAPI?.browser && screenshotDataUrl ? (
+          <img src={screenshotDataUrl} alt="Latest screenshot from the remote browser agent" className="h-full w-full object-contain bg-black" />
+        ) : typeof window !== 'undefined' && !(window as any).electronAPI?.browser ? (
           <iframe
             src={currentUrl}
             className="w-full h-full border-0 bg-white"
-            title="Browser"
+            title="Browser preview (some websites block embedding)"
             sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
           />
-        )}
+        ) : null}
       </div>
     </div>
   );

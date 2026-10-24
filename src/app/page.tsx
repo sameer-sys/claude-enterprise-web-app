@@ -133,6 +133,7 @@ export default function Home() {
   // Built-in Browser Panel State (OpenWork style)
   const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState<boolean>(false);
   const [browserUrl, setBrowserUrl] = useState<string>('https://www.google.com');
+  const [browserScreenshot, setBrowserScreenshot] = useState<string | undefined>(undefined);
   const [browserStepText, setBrowserStepText] = useState<string | undefined>(undefined);
 
   // Cross-device sync uses a high-entropy workspace code; Supabase credentials stay server-side.
@@ -881,6 +882,7 @@ export default function Home() {
         return;
       }
       setIsBrowserPanelOpen(true);
+      setBrowserScreenshot(undefined);
       const cleanTask = text.replace(/^\/browser\s*/i, '').trim();
       try {
         const browserResp = await fetch('/api/browser', {
@@ -914,6 +916,7 @@ export default function Home() {
               if (event.type === 'step' && event.step) {
                 const s = event.step;
                 setBrowserStepText(s.description);
+                if (s.screenshotBase64) setBrowserScreenshot('data:image/jpeg;base64,' + s.screenshotBase64);
                 if (s.url) {
                   setBrowserUrl(s.url);
                   try {
@@ -1423,6 +1426,7 @@ export default function Home() {
           initialUrl={browserUrl}
           isAgentRunning={isStreaming && isBrowserPanelOpen}
           agentStepText={browserStepText}
+          screenshotDataUrl={browserScreenshot}
           onUrlChange={(url) => setBrowserUrl(url)}
         />
 

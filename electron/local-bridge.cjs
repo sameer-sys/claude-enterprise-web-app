@@ -1312,10 +1312,15 @@ class LocalBridgeServer {
           const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
           const visible = candidates.filter(item => {
             const r = item.getBoundingClientRect();
-            return r.width > 0 && r.height > 0;
+            const style = window.getComputedStyle(item);
+            return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
           });
-          const idx = parseInt(String(${JSON.stringify(args.ref)}).replace(/^e/i, '')) - 1;
-          el = visible[idx];
+          const match = /^e([1-9]\\d*)$/i.exec(String(${JSON.stringify(args.ref)}).trim());
+          if (!match) return { success: false, error: 'Invalid element reference. Run browser_observe and use a reference such as e1.' };
+          el = visible[Number(match[1]) - 1];
+          if (el && (el.disabled || el.getAttribute('aria-disabled') === 'true')) {
+            return { success: false, error: 'The referenced element is disabled.' };
+          }
         }
         if (!el) return { success: false, error: 'Element not found on page' };
 
@@ -1347,7 +1352,7 @@ class LocalBridgeServer {
       const currentUrl = contents.getURL();
       const currentTitle = contents.getTitle();
       const obscureNote = res.obscured ? ` (Note: element had an overlay: <${res.obscuredBy}>)` : '';
-      return `Clicked ${res.clicked} ("${res.text}")${obscureNote}. Current Page: "${currentTitle}" (${currentUrl})`;
+      return `Click dispatched to ${res.clicked} ("${res.text}")${obscureNote}. Current Page: "${currentTitle}" (${currentUrl}). Re-observe the page to verify the intended outcome before reporting the task complete.`;
     }
 
     // D. Browser Type (Native Input + Keystrokes)
@@ -1366,13 +1371,31 @@ class LocalBridgeServer {
         if (${JSON.stringify(args.selector || null)}) {
           el = document.querySelector(${JSON.stringify(args.selector)});
         } else if (${JSON.stringify(args.ref || null)}) {
-          const candidates = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"]'));
-          const idx = parseInt(String(${JSON.stringify(args.ref)}).replace(/^e/i, '')) - 1;
-          el = candidates[idx] || document.querySelector('input, textarea');
+          const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
+          const visible = candidates.filter(item => {
+            const r = item.getBoundingClientRect();
+            const style = window.getComputedStyle(item);
+            return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          });
+          const match = /^e([1-9]\\d*)$/i.exec(String(${JSON.stringify(args.ref)}).trim());
+          if (!match) return { success: false, error: 'Invalid element reference. Run browser_observe and use a reference such as e1.' };
+          el = visible[Number(match[1]) - 1];
         } else {
-          el = document.activeElement || document.querySelector('input, textarea');
+          const active = document.activeElement;
+          const isEditable = node => node && (node.matches('input:not([type="hidden"]), textarea, [contenteditable="true"]') || node.isContentEditable);
+          el = isEditable(active) ? active : Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea, [contenteditable="true"]')).find(node => {
+            const r = node.getBoundingClientRect();
+            const style = window.getComputedStyle(node);
+            return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !node.disabled;
+          });
         }
-        if (!el) return { success: false, error: 'No input field found' };
+        if (!el) return { success: false, error: 'No visible editable input found. Run browser_observe and select a visible input reference.' };
+        if (!(el.matches('input:not([type="hidden"]), textarea, [contenteditable="true"]') || el.isContentEditable)) {
+          return { success: false, error: 'The referenced element is not an editable text field. Run browser_observe and choose an input, textarea, or editable area.' };
+        }
+        if (el.disabled || el.readOnly || el.getAttribute('aria-disabled') === 'true') {
+          return { success: false, error: 'The referenced input is disabled or read-only.' };
+        }
 
         el.focus();
         if (typeof el.select === 'function') el.select();
@@ -1401,6 +1424,17 @@ class LocalBridgeServer {
             el.dispatchEvent(new Event('change', { bubbles: true }));
           }
         })()`);
+      }
+
+      // Verify the browser accepted the text before reporting success.
+      const typeCheck = await contents.executeJavaScript(`(() => {
+        const el = document.activeElement;
+        if (!el) return { success: false, actual: '' };
+        const value = el.value !== undefined ? String(el.value) : (el.isContentEditable ? String(el.innerText || '') : '');
+        return { success: value === ${JSON.stringify(text)}, actual: value.slice(0, 120) };
+      })()`);
+      if (!typeCheck.success) {
+        return `Typing verification failed: the focused field does not contain the requested text. Actual value: "${String(typeCheck.actual || '').slice(0, 120)}". Re-observe the page and retry with the correct input reference.`;
       }
 
       // 3. Press Enter if requested
