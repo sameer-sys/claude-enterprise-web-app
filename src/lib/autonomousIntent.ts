@@ -296,9 +296,6 @@ export function parseAutonomousIntent(
     else if (/mobile(?:\s+app)?(?:\s+repo|\s+repository)?/i.test(raw) || (/github/i.test(raw) && /mobile/i.test(raw))) {
       targetUrl = 'https://github.com/sameer-sys/claude-enterprise-mobile-apk';
     }
-    else if (/github/i.test(raw) && (/\b(repo|code|repository|project|changes|make\s+it|sidebar|agents)\b/i.test(raw) || /\bbrowser\b/i.test(raw))) {
-      targetUrl = 'https://github.com/sameer-sys/claude-enterprise-desktop-app';
-    }
     // D. Recognized Service
     else if (matchedServiceKey) {
       const svc = SERVICE_DIRECTORY[matchedServiceKey];

@@ -2733,42 +2733,6 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     let mcpNudges = 0;
     const requiredMcpToolCalls = isCompoundMultiStepRequest ? 2 : (connectorRequest ? 1 : 0);
 
-    // Direct Autonomous Browser Intent Execution (Fast First-Turn Navigation)
-    try {
-      const { parseAutonomousIntent } = await import('@/lib/autonomousIntent');
-      const directBrowserIntent = parseAutonomousIntent(lastText, messages);
-      if (directBrowserIntent.isActionable && directBrowserIntent.category === 'BROWSER' && directBrowserIntent.browser) {
-        const targetUrl = directBrowserIntent.browser.url;
-        let obsResult = '';
-        try {
-          const { browserNavigate } = await import('@/lib/browserAutomation');
-          obsResult = await browserNavigate(targetUrl);
-        } catch (e: any) {
-          obsResult = `Navigated to ${targetUrl}`;
-        }
-
-        // Notify local bridge / Electron to show the browser panel
-        try {
-          await fetch('http://127.0.0.1:48080/api/execute-tool', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: 'browser_navigate', args: { url: targetUrl } }),
-            signal: AbortSignal.timeout(3000),
-          });
-        } catch {}
-
-        return streamTextDirectly(
-          `🌐 **Navigated Embedded Browser to:** \`${targetUrl}\`\n\n${obsResult}\n\nI have opened the embedded browser to your requested repository/site. The live page is rendered in your view!`,
-          'Browser Automation & Web Interaction',
-          toolContext,
-          false,
-          'Live Browser Automator'
-        );
-      }
-    } catch (e: any) {
-      console.warn('[DIRECT BROWSER INTENT ERR]', e?.message);
-    }
-
     for (let turn = 0; turn < maxAgentTurns; turn++) {
       if (Date.now() > agentDeadline) break;
 
