@@ -122,12 +122,7 @@ export async function runBrowserTask(
     // Smart planning based on task content
     const lower = task.toLowerCase();
 
-    // YouTube Playlist Task Automator (deterministic human-speed flow)
-    if (lower.includes('youtube') || lower.includes('playlist') || /\byt\b/i.test(lower)) {
-      return await executeYouTubeTask(page, task, emitStep);
-    }
-
-    // Generic Agent Loop for arbitrary browser tasks
+    // Every request uses the same observe -> act -> verify agent loop.
     return await executeGenericAgentTask(page, task, emitStep, { groqKey, geminiKey, maxSteps });
   } catch (err: any) {
     const errorMsg = err?.message || 'Browser execution failed';
@@ -258,8 +253,8 @@ async function executeGenericAgentTask(
     }
     return { title: document.title, url: location.href, text: (document.body?.innerText || '').slice(0, 4500), elements };
   });
-  const match = task.match(/https?:\\/\\/[^\\s"'<>]+/i);
-  const initialUrl = match ? match[0] : (/youtube/i.test(task) ? 'https://www.youtube.com' : /github/i.test(task) ? 'https://github.com' : 'https://www.google.com');
+  const urlToken = task.split(/\s+/).find((part) => part.startsWith('https://') || part.startsWith('http://'));
+  const initialUrl = urlToken || (/youtube/i.test(task) ? 'https://www.youtube.com' : /github/i.test(task) ? 'https://github.com' : 'https://www.google.com');
   await page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await emitState('navigate', 'Opened initial page; observing the live page.', initialUrl);
 
@@ -274,7 +269,9 @@ async function executeGenericAgentTask(
     });
     if (!resp.ok) throw new Error('Browser AI request failed (' + resp.status + '): ' + (await resp.text()).slice(0, 300));
     const body: any = await resp.json();
-    const raw = String(body?.choices?.[0]?.message?.content || '').trim().replace(/^[\x60]{3}(?:json)?\\s*/i, '').replace(/\\s*[\x60]{3}$/, '');
+    let raw = String(body?.choices?.[0]?.message?.content || '').trim();
+    if (raw.startsWith('```')) raw = raw.replace('```json', '').replace('```', '').trim();
+    if (raw.endsWith('```')) raw = raw.slice(0, -3).trim();
     let decision: any;
     try { decision = JSON.parse(raw); } catch { throw new Error('Browser AI returned an invalid action plan. Retry the task.'); }
     const action = String(decision.action || '').toLowerCase();
@@ -291,7 +288,7 @@ async function executeGenericAgentTask(
     }
     if (action === 'navigate') {
       const url = String(decision.url || '');
-      if (!/^https?:\\/\\//i.test(url)) throw new Error('Browser agent requested an invalid URL.');
+      if (!(url.startsWith('https://') || url.startsWith('http://'))) throw new Error('Browser agent requested an invalid URL.');
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
       await emitState('navigate', reason || 'Navigated; checking the new page.', url);
       continue;
@@ -302,7 +299,7 @@ async function executeGenericAgentTask(
       continue;
     }
     const ref = String(decision.ref || '');
-    if (!/^e[1-9]\\d*$/i.test(ref)) throw new Error('Browser agent returned an invalid element reference.');
+    if (ref[0]?.toLowerCase() !== 'e' || !Number.isInteger(Number(ref.slice(1))) || Number(ref.slice(1)) < 1) throw new Error('Browser agent returned an invalid element reference.');
     const locator = page.locator('[data-agent-ref="' + ref + '"]').first();
     if (!(await locator.count())) { await emitState('wait', 'The element reference changed; refreshing page observation.'); continue; }
     if (action === 'click') {
