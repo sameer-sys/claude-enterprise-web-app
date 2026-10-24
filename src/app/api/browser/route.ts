@@ -3,6 +3,7 @@ import { runBrowserTask, BrowserStep } from '@/lib/browserAgent';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,53 +28,10 @@ export async function POST(req: NextRequest) {
       try {
         await sendEvent({ type: 'start', task });
 
-        if (process.env.VERCEL) {
-          let targetUrl = '';
-          if (/github/i.test(task)) {
-            targetUrl = /login|sign\s*in/i.test(task) ? 'https://github.com/login' : 'https://github.com';
-          } else if (/youtube/i.test(task)) {
-            targetUrl = 'https://www.youtube.com';
-          } else if (/google/i.test(task)) {
-            targetUrl = 'https://www.google.com';
-          } else {
-            const urlMatch = task.match(/https?:\/\/[^\s]+/i);
-            if (urlMatch) targetUrl = urlMatch[0];
-            else targetUrl = `https://www.google.com/search?q=${encodeURIComponent(task)}`;
-          }
-
-          await sendEvent({
-            type: 'step',
-            step: {
-              stepNumber: 1,
-              action: 'navigate',
-              url: targetUrl,
-              description: `Navigating embedded browser to ${targetUrl}`,
-              timestamp: Date.now(),
-            },
-          });
-
-          if (/login|password|email|pass/i.test(task)) {
-            await sendEvent({
-              type: 'step',
-              step: {
-                stepNumber: 2,
-                action: 'type',
-                description: `Submitting credentials on ${targetUrl}`,
-                timestamp: Date.now(),
-              },
-            });
-          }
-
-          await sendEvent({
-            type: 'done',
-            success: true,
-            finalMessage: `✅ **Browser Task Active!**\n\nI have loaded **${targetUrl}** in your built-in browser panel. You can interact with the live page directly on your screen.`,
-          });
-          return;
-        }
-
         const result = await runBrowserTask(task, {
-          headless,
+          headless: process.env.VERCEL ? true : headless,
+          geminiApiKey: process.env.GEMINI_API_KEY,
+          groqApiKey: process.env.GROQ_API_KEY,
           onStep: async (step: BrowserStep) => {
             await sendEvent({ type: 'step', step });
           },
