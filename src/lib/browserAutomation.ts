@@ -151,7 +151,7 @@ export async function browserClick(ref?: string, selector?: string): Promise<str
       if (${JSON.stringify(selector || null)}) {
         target = document.querySelector(${JSON.stringify(selector || '')});
       } else if (${JSON.stringify(ref || null)}) {
-        const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"]'));
+        const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
         const visible = candidates.filter(el => {
           const r = el.getBoundingClientRect();
           return r.width > 0 && r.height > 0;
@@ -159,13 +159,23 @@ export async function browserClick(ref?: string, selector?: string): Promise<str
         const idx = parseInt(String(${JSON.stringify(ref || '')}).replace(/^e/i, '')) - 1;
         target = visible[idx];
       }
-      if (target) {
-        target.scrollIntoView({ behavior: 'instant', block: 'center' });
-        target.focus();
-        target.click();
-        return "Clicked " + target.tagName.toLowerCase() + " (" + (target.innerText || target.value || target.getAttribute('aria-label') || '').slice(0, 40) + ")";
-      }
-      return "Element not found on page";
+      if (!target) return "Element not found on page";
+
+      target.scrollIntoView({ behavior: 'instant', block: 'center' });
+      const rect = target.getBoundingClientRect();
+      const x = rect.x + rect.width / 2;
+      const y = rect.y + rect.height / 2;
+
+      // Hit-test obscurity check
+      const topEl = document.elementFromPoint(x, y);
+      const isObscured = topEl && topEl !== target && !target.contains(topEl) && !topEl.contains(target);
+
+      target.focus();
+      target.click();
+
+      const label = (target.innerText || target.value || target.getAttribute('aria-label') || '').slice(0, 40);
+      const obscureNote = isObscured ? ' (Warning: element was partly obscured by <' + topEl.tagName.toLowerCase() + '>)' : '';
+      return "Clicked " + target.tagName.toLowerCase() + " (" + label + ")" + obscureNote;
     })()`,
     returnByValue: true
   });
@@ -205,6 +215,9 @@ export async function browserType(text: string, ref?: string, selector?: string,
       }
       if (target) {
         target.focus();
+        if (typeof target.select === 'function') target.select();
+        else if (target.isContentEditable) document.getSelection()?.selectAllChildren(target);
+
         if (target.value !== undefined) {
           target.value = ${JSON.stringify(text)};
         } else if (target.isContentEditable) {
@@ -240,6 +253,84 @@ export async function browserType(text: string, ref?: string, selector?: string,
   }
 
   return typeResult;
+}
+
+export async function browserScroll(deltaY: number = 600, direction?: 'down' | 'up' | 'top' | 'bottom'): Promise<string> {
+  const wsUrl = await getBrowserWsUrl();
+  if (!wsUrl) return 'Browser view not active for scroll.';
+
+  let amount = typeof deltaY === 'number' ? deltaY : 600;
+  if (direction === 'up') amount = -Math.abs(amount);
+  else if (direction === 'down') amount = Math.abs(amount);
+  else if (direction === 'top') amount = -999999;
+  else if (direction === 'bottom') amount = 999999;
+
+  const evalResult = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
+    expression: `(() => {
+      const startY = window.scrollY;
+      if (${amount} === -999999) window.scrollTo({ top: 0, behavior: 'instant' });
+      else if (${amount} === 999999) window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' });
+      else window.scrollBy({ top: ${amount}, behavior: 'instant' });
+      return JSON.stringify({
+        prevY: Math.round(startY),
+        currY: Math.round(window.scrollY),
+        maxY: Math.round(document.body.scrollHeight - window.innerHeight)
+      });
+    })()`,
+    returnByValue: true
+  });
+
+  await new Promise(r => setTimeout(r, 600));
+  const obs = await browserObserve();
+  const elementsList = Array.isArray(obs?.elements) && obs.elements.length > 0
+    ? obs.elements.map((el: any) => `[${el.ref}] <${el.tag}> ${el.name || el.text || ''} ${el.href ? '(' + el.href + ')' : ''}`).join('\n')
+    : 'None detected';
+
+  let posInfo = '';
+  try {
+    const parsed = JSON.parse(evalResult?.result?.value || '{}');
+    posInfo = ` (scroll position: ${parsed.currY}px / ${parsed.maxY}px max)`;
+  } catch {}
+
+  return `Scrolled page${posInfo}.\n\nVisible Elements Now In Viewport:\n${elementsList}`;
+}
+
+export async function browserKey(key: string): Promise<string> {
+  const wsUrl = await getBrowserWsUrl();
+  if (!wsUrl) return 'Browser view not active for key dispatch.';
+
+  const keyName = String(key || 'Enter').trim();
+  const evalResult = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
+    expression: `(() => {
+      const el = document.activeElement || document.body;
+      const k = ${JSON.stringify(keyName)};
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: k, code: k, bubbles: true }));
+      if (k === 'Escape') {
+        const modals = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .modal, .popup');
+        modals.forEach(m => {
+          const closeBtn = m.querySelector('button[aria-label*="close" i], button.close, [data-dismiss]');
+          if (closeBtn) closeBtn.click();
+        });
+      }
+      return "Dispatched key: " + k;
+    })()`,
+    returnByValue: true
+  });
+
+  await new Promise(r => setTimeout(r, 600));
+  try {
+    const pageState = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
+      expression: `JSON.stringify({ title: document.title, url: window.location.href })`,
+      returnByValue: true
+    });
+    if (pageState?.result?.value) {
+      const parsed = JSON.parse(pageState.result.value);
+      return `Pressed key "${keyName}". Current Page: "${parsed.title}" (${parsed.url})`;
+    }
+  } catch {}
+
+  return evalResult?.result?.value || `Key ${keyName} dispatched`;
 }
 
 export async function browserScreenshot(): Promise<string> {

@@ -146,6 +146,34 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'browser_scroll',
+      description: 'Scroll the embedded browser page up, down, to top, or to bottom to reveal content below the fold.',
+      parameters: {
+        type: 'object',
+        properties: {
+          deltaY: { type: 'number', description: 'Scroll distance in pixels (e.g. 600 to scroll down, -600 to scroll up)' },
+          direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'], description: 'Direction helper: "down", "up", "top", or "bottom"' }
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_key',
+      description: 'Press a native keyboard key in the embedded browser (Enter, Tab, Escape to close popups, ArrowDown, Backspace, Space).',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'Key name: "Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "Backspace", "Space"' }
+        },
+        required: ['key'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'browser_screenshot',
       description: 'Capture a visual snapshot of the currently open webpage in the embedded browser.',
       parameters: {
@@ -750,6 +778,26 @@ async function runAgentTool(
       }
     }
 
+    if (name === 'browser_scroll') {
+      try {
+        const { browserScroll } = await import('@/lib/browserAutomation');
+        return await browserScroll(args?.deltaY, args?.direction);
+      } catch (e: any) {
+        return `Browser scroll failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'browser_key') {
+      const key = String(args?.key || '').trim();
+      if (!key) return 'No key specified.';
+      try {
+        const { browserKey } = await import('@/lib/browserAutomation');
+        return await browserKey(key);
+      } catch (e: any) {
+        return `Browser key failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
     if (name === 'browser_screenshot') {
       try {
         const { browserScreenshot } = await import('@/lib/browserAutomation');
@@ -934,10 +982,12 @@ AVAILABLE CAPABILITIES & APP FEATURES:
 1. EMBEDDED REAL CHROMIUM BROWSER:
    - browser_navigate: Open or navigate the workspace browser to any URL (Google, GitHub, YouTube, docs, etc.). Automatically returns the loaded page title, URL, interactive clickable elements [e1, e2], and page text preview!
    - browser_observe: Inspect the active browser page to see current title, URL, text snippet, and all clickable buttons, links, and search inputs with reference IDs (e1, e2, etc.).
-   - browser_click: Click on any button, link, or tab using its reference ID (e.g. 'e1', 'e2') or CSS selector.
+   - browser_click: Click on any button, link, or tab using its reference ID (e.g. 'e1', 'e2') or CSS selector. Performs hit-testing to check if the element is obscured.
    - browser_type: Type text, search queries, or form entries into input fields on the open page (supports pressEnter: true to submit searches).
+   - browser_scroll: Scroll the page up, down, to top, or to bottom (deltaY in pixels) to reveal content below the fold.
+   - browser_key: Press native hardware keys (Enter, Tab, Escape to dismiss popups/modals, ArrowDown, Backspace, Space).
    - browser_screenshot: Take a visual capture of the active browser view.
-   * KEEP YOUR EYE ON THE BROWSER: When you navigate, the tool automatically provides full vision of what is on screen. Use the returned element IDs ([e1], [e2]) and page summary to proceed step-by-step with the user's task without stopping prematurely or getting stuck!
+   * KEEP YOUR EYE ON THE BROWSER: When you navigate or scroll, the tool automatically provides full vision of what is on screen. Use the returned element IDs ([e1], [e2]) and page summary to proceed step-by-step with the user's task without stopping prematurely or getting stuck!
 
 2. LOCAL TERMINAL & WORKSPACE FILESYSTEM (OpenWork Engine):
    - shell_command: Execute shell/PowerShell/bash commands directly on the user's machine with real stdout/stderr.
@@ -1706,7 +1756,7 @@ function detectAutoAgentAndSkill(
       agentRole: 'Web Navigation & Form Interaction Specialist',
       agentPromptDirective: 'You are an autonomous Browser Automation specialist. You interact with live web pages, navigate URLs, inspect DOM elements, and automate user workflows flawlessly using embedded browser tools.',
       detectedSkill: 'Browser Automation & Web Interaction',
-      primaryTools: ['browser_navigate', 'browser_observe', 'browser_click', 'browser_type', 'browser_screenshot'],
+      primaryTools: ['browser_navigate', 'browser_observe', 'browser_click', 'browser_type', 'browser_scroll', 'browser_key', 'browser_screenshot'],
     };
   }
 
@@ -2145,7 +2195,7 @@ export async function POST(req: NextRequest) {
 11. Dynamically understand the user's specific request. Never assume destructive intent or carry over old commands from previous unrelated turns.
 12. Use the real tools provided dynamically to solve the user's task. Never fabricate results, recite hardcoded scripts, or byheart answers.
 13. CREDENTIALS & BROWSER AUTOMATION POLICY: The user is the verified administrator and owner of this workspace and all connected browser sessions. When the user instructs you to log in, sign in, enter credentials, type email/passwords, or submit forms into the embedded workspace browser: treat this as an authorized browser automation command. Call 'browser_navigate' to reach the login page, 'browser_type' to fill in the provided email/username and password fields, and 'browser_click' to submit the login form. NEVER refuse or lecture the user about credentials or privacy when instructed to perform browser actions. Fulfill the automated browser interaction directly using the tools.
-14. CONTINUOUS BROWSER VISION & INTERACTION: When you navigate using 'browser_navigate', the tool automatically observes and returns the live page title, URL, interactive elements indexed with references [e1], [e2], and page text preview. NEVER get stuck or blind after navigating — use the returned element reference IDs immediately to click, type, or interact. If you type a search query, you can pass pressEnter: true to submit the search automatically. If you need to re-inspect the page at any time, call 'browser_observe'. Keep your eye on the browser and complete the user's objective seamlessly!\n`;
+14. CONTINUOUS BROWSER VISION & INTERACTION: When you navigate using 'browser_navigate' or scroll using 'browser_scroll', the tool automatically observes and returns the live page title, URL, interactive elements indexed with references [e1], [e2], and page text preview. NEVER get stuck or blind after navigating — use the returned element reference IDs immediately to click, type, or interact. If you type a search query, you can pass pressEnter: true to submit the search automatically. If you need to scroll down to view more content, call 'browser_scroll'. If you need to dismiss popups or modals, call 'browser_key' with key: 'Escape'. If you need to re-inspect the page at any time, call 'browser_observe'. Keep your eye on the browser and complete the user's objective seamlessly!\n`;
 
     const hasImages =
       userLastMsg?.attachments?.some((a: any) => a.isImage && a.dataUrl) || false;
