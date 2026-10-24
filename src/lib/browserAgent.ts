@@ -71,10 +71,6 @@ export async function runBrowserTask(
   const steps: BrowserStep[] = [];
   const userDataDir = getChromeUserDataDir();
 
-  if (!fs.existsSync(userDataDir)) {
-    fs.mkdirSync(userDataDir, { recursive: true });
-  }
-
   const emitStep = (step: BrowserStep) => {
     steps.push(step);
     options.onStep?.(step);
@@ -103,6 +99,7 @@ export async function runBrowserTask(
       const pages = context.pages();
       page = pages[0] || await context.newPage();
     } else {
+      if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });
       const execPath = getInstalledBrowserPath();
       context = await chromium.launchPersistentContext(userDataDir, {
         executablePath: execPath,
