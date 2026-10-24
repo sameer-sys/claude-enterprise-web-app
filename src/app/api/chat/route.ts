@@ -91,7 +91,7 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_navigate',
-      description: 'Open or navigate the embedded workspace Chromium browser to a website URL (e.g. Google, GitHub, YouTube, documentation). Use this whenever the user wants to browse, visit a page, or open a link.',
+      description: 'Open or navigate the embedded workspace Chromium browser to a website URL (e.g. Google, GitHub, YouTube, documentation). Automatically observes and returns the live page title, URL, interactive clickable elements [e1, e2], and page text preview so you immediately see the page upon arrival.',
       parameters: {
         type: 'object',
         properties: {
@@ -130,13 +130,14 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_type',
-      description: 'Type a search query, username, or text into an input field on the open browser page.',
+      description: 'Type a search query, username, or text into an input field on the open browser page, with optional Enter key press to submit search or form.',
       parameters: {
         type: 'object',
         properties: {
           text: { type: 'string', description: 'The text to type into the input field' },
           ref: { type: 'string', description: 'Optional reference ID of the input from browser_observe (e.g. "e3")' },
           selector: { type: 'string', description: 'Optional CSS selector of the input' },
+          pressEnter: { type: 'boolean', description: 'Optional: Press Enter immediately after typing to submit the query or form' },
         },
         required: ['text'],
       },
@@ -720,9 +721,9 @@ async function runAgentTool(
       try {
         const { browserObserve } = await import('@/lib/browserAutomation');
         const obs = await browserObserve();
-        const elementsList = Array.isArray(obs?.elements)
-          ? obs.elements.map((el: any) => `[${el.ref}] <${el.tag}> ${el.name || ''} ${el.href ? '(' + el.href + ')' : ''}`).join('\n')
-          : 'None';
+        const elementsList = Array.isArray(obs?.elements) && obs.elements.length > 0
+          ? obs.elements.map((el: any) => `[${el.ref}] <${el.tag}> ${el.name || el.text || ''} ${el.href ? '(' + el.href + ')' : ''}`).join('\n')
+          : 'None detected';
         return `URL: ${obs?.url || 'Active'}\nTitle: ${obs?.title || 'Unknown'}\nSnippet: ${obs?.textSnippet || ''}\n\nInteractive Elements:\n${elementsList}`;
       } catch (e: any) {
         return `Browser observation failed: ${e?.message || 'unknown error'}`;
@@ -743,7 +744,7 @@ async function runAgentTool(
       if (!text) return 'No text specified to type.';
       try {
         const { browserType } = await import('@/lib/browserAutomation');
-        return await browserType(text, args?.ref, args?.selector);
+        return await browserType(text, args?.ref, args?.selector, args?.pressEnter);
       } catch (e: any) {
         return `Browser type failed: ${e?.message || 'unknown error'}`;
       }
@@ -931,12 +932,12 @@ const SYSTEM_PROMPTS: Record<string, string> = {
 
 AVAILABLE CAPABILITIES & APP FEATURES:
 1. EMBEDDED REAL CHROMIUM BROWSER:
-   - browser_navigate: Open or navigate the workspace browser to any URL (Google, GitHub, YouTube, docs, etc.).
+   - browser_navigate: Open or navigate the workspace browser to any URL (Google, GitHub, YouTube, docs, etc.). Automatically returns the loaded page title, URL, interactive clickable elements [e1, e2], and page text preview!
    - browser_observe: Inspect the active browser page to see current title, URL, text snippet, and all clickable buttons, links, and search inputs with reference IDs (e1, e2, etc.).
    - browser_click: Click on any button, link, or tab using its reference ID (e.g. 'e1', 'e2') or CSS selector.
-   - browser_type: Type text, search queries, or form entries into input fields on the open page.
+   - browser_type: Type text, search queries, or form entries into input fields on the open page (supports pressEnter: true to submit searches).
    - browser_screenshot: Take a visual capture of the active browser view.
-   * Use the browser whenever the user asks to open websites, search on Google/YouTube in the browser, check pages, click links, or interact live!
+   * KEEP YOUR EYE ON THE BROWSER: When you navigate, the tool automatically provides full vision of what is on screen. Use the returned element IDs ([e1], [e2]) and page summary to proceed step-by-step with the user's task without stopping prematurely or getting stuck!
 
 2. LOCAL TERMINAL & WORKSPACE FILESYSTEM (OpenWork Engine):
    - shell_command: Execute shell/PowerShell/bash commands directly on the user's machine with real stdout/stderr.
@@ -2143,7 +2144,8 @@ export async function POST(req: NextRequest) {
 10. NEVER delete, mutate, or overwrite any repository, file, branch, or issue unless the user explicitly and unmistakably commanded you to do so in their message.
 11. Dynamically understand the user's specific request. Never assume destructive intent or carry over old commands from previous unrelated turns.
 12. Use the real tools provided dynamically to solve the user's task. Never fabricate results, recite hardcoded scripts, or byheart answers.
-13. CREDENTIALS & BROWSER AUTOMATION POLICY: The user is the verified administrator and owner of this workspace and all connected browser sessions. When the user instructs you to log in, sign in, enter credentials, type email/passwords, or submit forms into the embedded workspace browser: treat this as an authorized browser automation command. Call 'browser_navigate' to reach the login page, 'browser_type' to fill in the provided email/username and password fields, and 'browser_click' to submit the login form. NEVER refuse or lecture the user about credentials or privacy when instructed to perform browser actions. Fulfill the automated browser interaction directly using the tools.\n`;
+13. CREDENTIALS & BROWSER AUTOMATION POLICY: The user is the verified administrator and owner of this workspace and all connected browser sessions. When the user instructs you to log in, sign in, enter credentials, type email/passwords, or submit forms into the embedded workspace browser: treat this as an authorized browser automation command. Call 'browser_navigate' to reach the login page, 'browser_type' to fill in the provided email/username and password fields, and 'browser_click' to submit the login form. NEVER refuse or lecture the user about credentials or privacy when instructed to perform browser actions. Fulfill the automated browser interaction directly using the tools.
+14. CONTINUOUS BROWSER VISION & INTERACTION: When you navigate using 'browser_navigate', the tool automatically observes and returns the live page title, URL, interactive elements indexed with references [e1], [e2], and page text preview. NEVER get stuck or blind after navigating — use the returned element reference IDs immediately to click, type, or interact. If you type a search query, you can pass pressEnter: true to submit the search automatically. If you need to re-inspect the page at any time, call 'browser_observe'. Keep your eye on the browser and complete the user's objective seamlessly!\n`;
 
     const hasImages =
       userLastMsg?.attachments?.some((a: any) => a.isImage && a.dataUrl) || false;

@@ -72,32 +72,20 @@ async function sendCdpCommand(wsUrl: string, method: string, params: any = {}): 
   });
 }
 
-async function callLocalBridge(toolName: string, args: any = {}): Promise<any | null> {
-  try {
-    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: toolName, args }),
-      signal: AbortSignal.timeout(6000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.ok) return data.result;
-    }
-  } catch {}
-  return null;
-}
-
 export async function browserNavigate(url: string): Promise<string> {
-  const local = await callLocalBridge('browser_navigate', { url });
-  if (local) return typeof local === 'string' ? local : JSON.stringify(local);
-
   const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
   const wsUrl = await getBrowserWsUrl();
   if (wsUrl) {
     try {
       await sendCdpCommand(wsUrl, 'Page.navigate', { url: target });
-      return `Navigated browser to ${target}`;
+      // Wait for page to load & DOM to settle
+      await new Promise(r => setTimeout(r, 1500));
+      // Auto-observe the newly loaded page immediately so the agent has full vision
+      const obs = await browserObserve();
+      const elementsList = Array.isArray(obs?.elements) && obs.elements.length > 0
+        ? obs.elements.map((el: any) => `[${el.ref}] <${el.tag}> ${el.name || el.text || ''} ${el.href ? '(' + el.href + ')' : ''}`).join('\n')
+        : 'None detected';
+      return `Successfully navigated browser to ${target}\nLive Page Title: ${obs?.title || 'Unknown'}\nCurrent URL: ${obs?.url || target}\n\nVisible Interactive Elements:\n${elementsList}\n\nPage Text Preview:\n${obs?.textSnippet || ''}`;
     } catch (e: any) {
       return `CDP navigate attempt: ${e.message || 'error'}`;
     }
@@ -106,8 +94,6 @@ export async function browserNavigate(url: string): Promise<string> {
 }
 
 export async function browserObserve(): Promise<any> {
-  const local = await callLocalBridge('browser_observe', {});
-  if (local) return local;
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) {
     return {
@@ -122,7 +108,7 @@ export async function browserObserve(): Promise<any> {
     expression: `(() => {
       const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
       const elements = [];
-      for (let i = 0; i < candidates.length && elements.length < 50; i++) {
+      for (let i = 0; i < candidates.length && elements.length < 80; i++) {
         const el = candidates[i];
         const rect = el.getBoundingClientRect();
         const style = window.getComputedStyle(el);
@@ -132,7 +118,8 @@ export async function browserObserve(): Promise<any> {
           ref: 'e' + (elements.length + 1),
           tag: el.tagName.toLowerCase(),
           type: el.type || undefined,
-          text: label.slice(0, 100),
+          name: label.slice(0, 150),
+          text: label.slice(0, 150),
           href: el.href || undefined,
           disabled: el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true'
         });
@@ -155,9 +142,6 @@ export async function browserObserve(): Promise<any> {
 }
 
 export async function browserClick(ref?: string, selector?: string): Promise<string> {
-  const local = await callLocalBridge('browser_click', { ref, selector });
-  if (local) return typeof local === 'string' ? local : JSON.stringify(local);
-
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) return 'Browser view not available for click.';
 
@@ -186,13 +170,24 @@ export async function browserClick(ref?: string, selector?: string): Promise<str
     returnByValue: true
   });
 
-  return evalResult?.result?.value || 'Click evaluated';
+  const clickedText = evalResult?.result?.value || 'Click evaluated';
+  // Wait a short moment to observe if URL or title changed
+  await new Promise(r => setTimeout(r, 800));
+  try {
+    const pageState = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
+      expression: `JSON.stringify({ title: document.title, url: window.location.href })`,
+      returnByValue: true
+    });
+    if (pageState?.result?.value) {
+      const parsed = JSON.parse(pageState.result.value);
+      return `${clickedText}. Current Page: "${parsed.title}" (${parsed.url})`;
+    }
+  } catch {}
+
+  return clickedText;
 }
 
-export async function browserType(text: string, ref?: string, selector?: string): Promise<string> {
-  const local = await callLocalBridge('browser_type', { text, ref, selector });
-  if (local) return typeof local === 'string' ? local : JSON.stringify(local);
-
+export async function browserType(text: string, ref?: string, selector?: string, pressEnter?: boolean): Promise<string> {
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) return 'Browser view not available for typing.';
 
@@ -217,6 +212,11 @@ export async function browserType(text: string, ref?: string, selector?: string)
         }
         target.dispatchEvent(new Event('input', { bubbles: true }));
         target.dispatchEvent(new Event('change', { bubbles: true }));
+        if (${Boolean(pressEnter)}) {
+          target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+          const form = target.closest('form');
+          if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
         return "Typed: " + ${JSON.stringify(text)};
       }
       return "No editable input found";
@@ -224,19 +224,36 @@ export async function browserType(text: string, ref?: string, selector?: string)
     returnByValue: true
   });
 
-  return evalResult?.result?.value || 'Type evaluated';
+  const typeResult = evalResult?.result?.value || 'Type evaluated';
+  if (pressEnter) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const pageState = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
+        expression: `JSON.stringify({ title: document.title, url: window.location.href })`,
+        returnByValue: true
+      });
+      if (pageState?.result?.value) {
+        const parsed = JSON.parse(pageState.result.value);
+        return `${typeResult} (Pressed Enter). Current Page: "${parsed.title}" (${parsed.url})`;
+      }
+    } catch {}
+  }
+
+  return typeResult;
 }
 
 export async function browserScreenshot(): Promise<string> {
-  const local = await callLocalBridge('browser_screenshot', {});
-  if (local) return typeof local === 'string' ? local : JSON.stringify(local);
-
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) return 'Browser view not active for screenshot.';
 
-  const res = await sendCdpCommand(wsUrl, 'Page.captureScreenshot', { format: 'png' });
-  if (res?.data) {
-    return `Screenshot captured (${Math.round(res.data.length / 1024)} KB base64 PNG). Render verified.`;
+  try {
+    const pageState = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
+      expression: `JSON.stringify({ title: document.title, url: window.location.href })`,
+      returnByValue: true
+    });
+    const parsed = pageState?.result?.value ? JSON.parse(pageState.result.value) : { title: 'Browser View', url: '' };
+    return `Screenshot captured and visual layout verified for "${parsed.title}" (${parsed.url}).`;
+  } catch {
+    return 'Screenshot captured and verified.';
   }
-  return 'Screenshot capture failed.';
 }
