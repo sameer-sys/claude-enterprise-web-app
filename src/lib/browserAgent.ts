@@ -95,9 +95,10 @@ export async function runBrowserTask(
     if (remoteEndpoint) {
       emitStep({ stepNumber: 2, action: 'wait', description: 'Connecting to the configured remote Chromium browser...', timestamp: Date.now() });
       remoteBrowser = await chromium.connectOverCDP(remoteEndpoint, { timeout: 20000 });
-      context = remoteBrowser.contexts()[0] || await remoteBrowser.newContext({ viewport: { width: 1280, height: 800 } });
-      const pages = context.pages();
-      page = pages[0] || await context.newPage();
+      // Give each task an isolated browser context so one user's cookies and
+      // page state cannot leak into another request sharing the same endpoint.
+      context = await remoteBrowser.newContext({ viewport: { width: 1280, height: 800 } });
+      page = await context.newPage();
     } else {
       if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });
       const execPath = getInstalledBrowserPath();
