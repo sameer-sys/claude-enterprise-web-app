@@ -1147,11 +1147,13 @@ export default function Home() {
                 execResult = `Execution error: ${err?.message || err}`;
               }
 
-              if (data.name === 'browser_navigate' && data.args?.url) {
+              if (data.name.startsWith('browser_')) {
                 setIsBrowserPanelOpen(true);
-                setBrowserUrl(data.args.url);
-                if (typeof window !== 'undefined' && (window as any).electronAPI?.browser?.navigate) {
-                  (window as any).electronAPI.browser.navigate(data.args.url);
+                if (data.args?.url) {
+                  setBrowserUrl(data.args.url);
+                  if (typeof window !== 'undefined' && (window as any).electronAPI?.browser?.navigate) {
+                    (window as any).electronAPI.browser.navigate(data.args.url);
+                  }
                 }
               }
 
