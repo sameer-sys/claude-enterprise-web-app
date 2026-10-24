@@ -473,14 +473,12 @@ export default function BrowserPanel({
         {typeof window !== 'undefined' && !(window as any).electronAPI?.browser && screenshotDataUrl ? (
           <img src={screenshotDataUrl} alt="Latest screenshot from the remote browser agent" className="h-full w-full object-contain bg-black" />
         ) : typeof window !== 'undefined' && !(window as any).electronAPI?.browser ? (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-8 text-center text-neutral-200">
-            <Globe className="h-10 w-10 text-neutral-400" />
-            <div className="max-w-md text-sm">
-              <p className="font-semibold">Remote browser preview</p>
-              <p className="mt-2 text-neutral-400">Some sites block embedded previews. Once a remote browser is configured, screenshots of the actual automated browser will appear here.</p>
-            </div>
-            <a href={currentUrl} target="_blank" rel="noreferrer" className="text-sm underline underline-offset-4">Open this page in a new tab</a>
-          </div>
+          <iframe
+            src={currentUrl}
+            className="w-full h-full border-0 bg-white"
+            title="Browser preview (some websites block embedding)"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+          />
         ) : null}
       </div>
     </div>
