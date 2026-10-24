@@ -181,7 +181,7 @@ export function parseAutonomousIntent(
   // Pure coding or explanation prompt detection
   const isPureCodingOrReasoning = (
     /\b(write|create|implement|explain|how\s+to|what\s+is|why\s+does|script|code|function|algorithm)\b/i.test(lower) &&
-    !/\b(in\s+browser|in\s+the\s+browser|on\s+browser|open\s+in\s+browser|navigate\s+to|go\s+to|visit)\b/i.test(lower)
+    !/\b(in\s+browser|in\s+the\s+browser|on\s+browser|open\s+in\s+browser|navigate\s+to|go\s+to|visit|from\s+the\s+browser|from\s+browser|via\s+browser|use\s+(?:the\s+)?browser|through\s+(?:the\s+)?browser)\b/i.test(lower)
   );
 
   // Shell / CLI directive detection
@@ -255,6 +255,9 @@ export function parseAutonomousIntent(
     /\b(browser|browse|navigate|open|visit|launch|go\s+to|pull\s+up|load|show|jump\s+on|check\s+on|view)\b/i.test(lower) ||
     lower.includes('in the browser') ||
     lower.includes('on browser') ||
+    lower.includes('from the browser') ||
+    lower.includes('from browser') ||
+    lower.includes('via browser') ||
     lower.includes('cant see') ||
     Boolean(explicitUrlMatch) ||
     Boolean(domainMatch) ||
@@ -283,7 +286,7 @@ export function parseAutonomousIntent(
     else if (domainMatch) {
       targetUrl = `https://${domainMatch[1]}`;
     }
-    // C. Recognized Specific Repositories
+    // C. Recognized Specific Repositories & GitHub Code Context
     else if (/desktop(?:\s+app)?(?:\s+repo|\s+repository)?/i.test(raw) || (/github/i.test(raw) && /desktop/i.test(raw))) {
       targetUrl = 'https://github.com/sameer-sys/claude-enterprise-desktop-app';
     }
@@ -292,6 +295,9 @@ export function parseAutonomousIntent(
     }
     else if (/mobile(?:\s+app)?(?:\s+repo|\s+repository)?/i.test(raw) || (/github/i.test(raw) && /mobile/i.test(raw))) {
       targetUrl = 'https://github.com/sameer-sys/claude-enterprise-mobile-apk';
+    }
+    else if (/github/i.test(raw) && (/\b(repo|code|repository|project|changes|make\s+it|sidebar|agents)\b/i.test(raw) || /\bbrowser\b/i.test(raw))) {
+      targetUrl = 'https://github.com/sameer-sys/claude-enterprise-desktop-app';
     }
     // D. Recognized Service
     else if (matchedServiceKey) {

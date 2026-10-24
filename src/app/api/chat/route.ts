@@ -1327,8 +1327,8 @@ function looksLikeRawToolCallJson(text: string): boolean {
   }
   return (
     /^\{\s*"(?:role|tool|name|action|tool_calls|id|type)"/i.test(trimmed) ||
-    trimmed.startsWith('<tool_call>') ||
-    trimmed.startsWith('<function=') ||
+    trimmed.includes('<tool_call>') ||
+    trimmed.includes('<function=') ||
     trimmed.includes('"tool_calls":')
   );
 }
@@ -2733,6 +2733,42 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     let mcpNudges = 0;
     const requiredMcpToolCalls = isCompoundMultiStepRequest ? 2 : (connectorRequest ? 1 : 0);
 
+    // Direct Autonomous Browser Intent Execution (Fast First-Turn Navigation)
+    try {
+      const { parseAutonomousIntent } = await import('@/lib/autonomousIntent');
+      const directBrowserIntent = parseAutonomousIntent(lastText, messages);
+      if (directBrowserIntent.isActionable && directBrowserIntent.category === 'BROWSER' && directBrowserIntent.browser) {
+        const targetUrl = directBrowserIntent.browser.url;
+        let obsResult = '';
+        try {
+          const { browserNavigate } = await import('@/lib/browserAutomation');
+          obsResult = await browserNavigate(targetUrl);
+        } catch (e: any) {
+          obsResult = `Navigated to ${targetUrl}`;
+        }
+
+        // Notify local bridge / Electron to show the browser panel
+        try {
+          await fetch('http://127.0.0.1:48080/api/execute-tool', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'browser_navigate', args: { url: targetUrl } }),
+            signal: AbortSignal.timeout(3000),
+          });
+        } catch {}
+
+        return streamTextDirectly(
+          `🌐 **Navigated Embedded Browser to:** \`${targetUrl}\`\n\n${obsResult}\n\nI have opened the embedded browser to your requested repository/site. The live page is rendered in your view!`,
+          'Browser Automation & Web Interaction',
+          toolContext,
+          false,
+          'Live Browser Automator'
+        );
+      }
+    } catch (e: any) {
+      console.warn('[DIRECT BROWSER INTENT ERR]', e?.message);
+    }
+
     for (let turn = 0; turn < maxAgentTurns; turn++) {
       if (Date.now() > agentDeadline) break;
 
@@ -2948,7 +2984,19 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
               let xmlArgs: any = null;
               try {
                 xmlArgs = JSON.parse(xmlMatch[2].trim());
-              } catch {}
+              } catch {
+                // Parse XML parameter tags: <parameter=key>value</parameter> or <parameter>value</parameter>
+                const paramRegex = /<parameter(?:=([A-Za-z0-9_:-]+))?>([\s\S]*?)<\/parameter>/gi;
+                let pMatch: RegExpExecArray | null;
+                const extracted: Record<string, string> = {};
+                while ((pMatch = paramRegex.exec(xmlMatch[2])) !== null) {
+                  const pKey = pMatch[1] || (clean.includes('shell') ? 'command' : (clean.includes('navigate') ? 'url' : 'text'));
+                  extracted[pKey] = pMatch[2].trim();
+                }
+                if (Object.keys(extracted).length > 0) {
+                  xmlArgs = extracted;
+                }
+              }
 
               const matched = effectiveTools.find((t: any) => {
                 const name = String(t?.function?.name || '').toLowerCase();
@@ -2961,6 +3009,11 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
               const effectiveArgs = (xmlArgs && typeof xmlArgs === 'object' && Object.keys(xmlArgs).length > 0)
                 ? xmlArgs
                 : extractToolArgs(toolName, lastText, contextHistoryText);
+
+              // Strip the raw XML tool call from agentMsg content so it never leaks into the conversation
+              if (agentMsg) {
+                agentMsg.content = String(agentMsg.content || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '').trim();
+              }
 
               toolCalls = [{
                 id: 'call_xml_parsed_' + Date.now(),
