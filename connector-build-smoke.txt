@@ -1,0 +1,1 @@
+Temporary build-smoke marker. This file exists only on validation PR #2.

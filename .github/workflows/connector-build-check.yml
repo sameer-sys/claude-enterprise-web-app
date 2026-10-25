@@ -1,4 +1,5 @@
 name: Connector Build Check
+# current-ref smoke test
 
 on:
   push:
