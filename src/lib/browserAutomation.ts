@@ -74,6 +74,19 @@ async function sendCdpCommand(wsUrl: string, method: string, params: any = {}): 
 
 export async function browserNavigate(url: string): Promise<string> {
   const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_navigate', args: { url: target } }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
   const wsUrl = await getBrowserWsUrl();
   if (wsUrl) {
     try {
@@ -94,6 +107,24 @@ export async function browserNavigate(url: string): Promise<string> {
 }
 
 export async function browserObserve(): Promise<any> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_observe', args: {} }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) {
+        if (typeof data.result === 'string') {
+          return { raw: data.result, textSnippet: data.result, title: 'Embedded Browser', url: 'Active', elements: [] };
+        }
+        return data.result;
+      }
+    }
+  } catch {}
+
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) {
     return {
@@ -106,16 +137,20 @@ export async function browserObserve(): Promise<any> {
 
   const evalResult = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
     expression: `(() => {
-      const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
+      const candidates = Array.from(document.querySelectorAll(
+        'a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"], video, ytd-thumbnail, #video-title, [aria-label*="play" i], [aria-label*="search" i]'
+      ));
       const elements = [];
-      for (let i = 0; i < candidates.length && elements.length < 80; i++) {
+      for (let i = 0; i < candidates.length && elements.length < 100; i++) {
         const el = candidates[i];
         const rect = el.getBoundingClientRect();
         const style = window.getComputedStyle(el);
         if (!rect.width || !rect.height || style.visibility === 'hidden' || style.display === 'none') continue;
+        const refId = 'e' + (elements.length + 1);
+        el.dataset.browserRef = refId;
         const label = el.getAttribute('aria-label') || (el.innerText || '').trim() || el.placeholder || el.value || el.name || '';
         elements.push({
-          ref: 'e' + (elements.length + 1),
+          ref: refId,
           tag: el.tagName.toLowerCase(),
           type: el.type || undefined,
           name: label.slice(0, 150),
@@ -141,7 +176,20 @@ export async function browserObserve(): Promise<any> {
   return evalResult?.result || { error: 'No observation data' };
 }
 
-export async function browserClick(ref?: string, selector?: string): Promise<string> {
+export async function browserClick(ref?: string, selector?: string, text?: string, x?: number, y?: number): Promise<string> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_click', args: { ref, selector, text, x, y } }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) return 'Browser view not available for click.';
 
@@ -151,23 +199,27 @@ export async function browserClick(ref?: string, selector?: string): Promise<str
       if (${JSON.stringify(selector || null)}) {
         target = document.querySelector(${JSON.stringify(selector || '')});
       } else if (${JSON.stringify(ref || null)}) {
-        const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
-        const visible = candidates.filter(el => {
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        });
-        const idx = parseInt(String(${JSON.stringify(ref || '')}).replace(/^e/i, '')) - 1;
-        target = visible[idx];
+        const refStr = ${JSON.stringify(ref || '')};
+        target = document.querySelector('[data-browser-ref="' + refStr + '"]');
+        if (!target) {
+          const candidates = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]'));
+          const visible = candidates.filter(el => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          });
+          const idx = parseInt(String(refStr).replace(/^e/i, '')) - 1;
+          target = visible[idx];
+        }
       }
       if (!target) return "Element not found on page";
 
       target.scrollIntoView({ behavior: 'instant', block: 'center' });
       const rect = target.getBoundingClientRect();
-      const x = rect.x + rect.width / 2;
-      const y = rect.y + rect.height / 2;
+      const clickX = rect.x + rect.width / 2;
+      const clickY = rect.y + rect.height / 2;
 
       // Hit-test obscurity check
-      const topEl = document.elementFromPoint(x, y);
+      const topEl = document.elementFromPoint(clickX, clickY);
       const isObscured = topEl && topEl !== target && !target.contains(topEl) && !topEl.contains(target);
 
       target.focus();
@@ -197,7 +249,82 @@ export async function browserClick(ref?: string, selector?: string): Promise<str
   return clickedText;
 }
 
-export async function browserType(text: string, ref?: string, selector?: string, pressEnter?: boolean): Promise<string> {
+export async function browserPlay(selector?: string): Promise<string> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_play', args: { selector } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
+  const wsUrl = await getBrowserWsUrl();
+  if (!wsUrl) return 'Browser view not available for media playback.';
+
+  const evalResult = await sendCdpCommand(wsUrl, 'Runtime.evaluate', {
+    expression: `(() => {
+      const media = Array.from(document.querySelectorAll('video, audio'));
+      for (const m of media) {
+        try {
+          m.muted = false;
+          const p = m.play();
+          if (p !== undefined) p.catch(() => { m.muted = true; m.play(); });
+          return 'Started video playback.';
+        } catch (e) {}
+      }
+      const ytp = document.querySelector('button.ytp-play-button, ytd-player, .html5-video-player');
+      if (ytp) {
+        ytp.click();
+        return 'Clicked YouTube play button.';
+      }
+      return 'No media player found.';
+    })()`,
+    returnByValue: true
+  });
+  return evalResult?.result?.value || 'Dispatched play command.';
+}
+
+export async function browserSearch(query: string, engine: string = 'google'): Promise<string> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_search', args: { query, engine } }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
+  let searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+  if (engine === 'youtube') searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+  else if (engine === 'github') searchUrl = `https://github.com/search?q=${encodeURIComponent(query)}`;
+  else if (engine === 'wikipedia') searchUrl = `https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(query)}`;
+
+  return browserNavigate(searchUrl);
+}
+
+export async function browserType(text: string, ref?: string, selector?: string, pressEnter?: boolean, clearFirst: boolean = true): Promise<string> {
+  try {
+    const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'browser_type', args: { text, ref, selector, pressEnter, clearFirst } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    }
+  } catch {}
+
   const wsUrl = await getBrowserWsUrl();
   if (!wsUrl) return 'Browser view not available for typing.';
 
@@ -207,16 +334,26 @@ export async function browserType(text: string, ref?: string, selector?: string,
       if (${JSON.stringify(selector || null)}) {
         target = document.querySelector(${JSON.stringify(selector || '')});
       } else if (${JSON.stringify(ref || null)}) {
-        const candidates = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"]'));
-        const idx = parseInt(String(${JSON.stringify(ref || '')}).replace(/^e/i, '')) - 1;
-        target = candidates[idx] || document.querySelector('input, textarea');
+        const refStr = ${JSON.stringify(ref || '')};
+        target = document.querySelector('[data-browser-ref="' + refStr + '"]');
+        if (!target) {
+          const candidates = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"]'));
+          const idx = parseInt(String(refStr).replace(/^e/i, '')) - 1;
+          target = candidates[idx] || document.querySelector('input, textarea');
+        }
       } else {
         target = document.activeElement || document.querySelector('input, textarea');
       }
       if (target) {
         target.focus();
-        if (typeof target.select === 'function') target.select();
-        else if (target.isContentEditable) document.getSelection()?.selectAllChildren(target);
+        if (${Boolean(clearFirst)}) {
+          if (typeof target.select === 'function') target.select();
+          if (target.value !== undefined) target.value = '';
+          else if (target.isContentEditable) target.innerText = '';
+        } else {
+          if (typeof target.select === 'function') target.select();
+          else if (target.isContentEditable) document.getSelection()?.selectAllChildren(target);
+        }
 
         if (target.value !== undefined) {
           target.value = ${JSON.stringify(text)};
@@ -350,7 +487,7 @@ export async function browserScreenshot(): Promise<string> {
 }
 
 export async function browserNewTab(url?: string): Promise<string> {
-  const target = url ? (/^https?:\/\//i.test(url) ? url : `https://${url}`) : 'https://www.google.com';
+  const target = url ? (/^https?:\/\/|^data:/i.test(url) ? url : `https://${url}`) : 'newtab';
   try {
     const res = await fetch('http://127.0.0.1:48080/api/execute-tool', {
       method: 'POST',

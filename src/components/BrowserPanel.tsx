@@ -235,11 +235,12 @@ export default function BrowserPanel({
 
   const handleNewTab = () => {
     const api = (window as any).electronAPI?.browser;
+    const tabNum = tabs.length + 1;
     if (api?.newTab || api?.createTab) {
-      (api.newTab || api.createTab)('https://www.google.com');
+      (api.newTab || api.createTab)('newtab');
     } else {
       const newId = `tab-${Date.now()}`;
-      const newTab: BrowserTab = { id: newId, url: 'https://www.google.com', title: 'Google' };
+      const newTab: BrowserTab = { id: newId, url: 'about:blank', title: `New Tab #${tabNum}` };
       setTabs(prev => [...prev, newTab]);
       handleSelectTab(newTab);
     }
@@ -295,25 +296,31 @@ export default function BrowserPanel({
       <div className="flex flex-col border-b border-[#2a2822] bg-[#1d1c18] shrink-0">
         {/* OpenWork Multi-Tabs Bar */}
         <div className="flex items-center px-2 pt-1.5 pb-0 space-x-1 overflow-x-auto no-scrollbar border-b border-[#25231e]">
-          {tabs.map((tab) => {
+          {tabs.map((tab, idx) => {
             const isActive = tab.id === activeTabId;
             return (
               <div
                 key={tab.id}
                 onClick={() => handleSelectTab(tab)}
-                className={`group flex items-center space-x-1.5 px-3 py-1 rounded-t-lg text-xs cursor-pointer select-none transition-all border-t border-x ${
+                className={`group flex items-center space-x-1.5 px-3 py-1.5 rounded-t-lg text-xs cursor-pointer select-none transition-all border-t border-x relative ${
                   isActive
-                    ? 'bg-[#141310] text-[#ece9e2] border-[#38352d] font-medium'
+                    ? 'bg-[#141310] text-[#ece9e2] border-[#cc785c]/70 font-medium shadow-sm'
                     : 'bg-[#181714] text-[#8c867a] border-transparent hover:bg-[#211f1a] hover:text-[#c4bfb4]'
                 }`}
               >
+                <span className={`text-[10px] px-1 py-0.2 rounded font-mono font-semibold ${
+                  isActive ? 'bg-[#cc785c]/20 text-[#cc785c]' : 'bg-[#25231e] text-[#6b675e]'
+                }`}>
+                  #{idx + 1}
+                </span>
                 <Globe className={`w-3 h-3 ${isActive ? 'text-[#cc785c]' : 'text-[#6b675e]'}`} />
-                <span className="truncate max-w-[120px]">{tab.title}</span>
+                <span className="truncate max-w-[120px]">{tab.title || `Tab #${idx + 1}`}</span>
                 {tabs.length > 1 && (
                   <button
                     type="button"
                     onClick={(e) => handleCloseTab(e, tab.id)}
-                    className="p-0.5 rounded hover:bg-[#38352d] text-[#6b675e] hover:text-[#ece9e2] opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="p-0.5 rounded hover:bg-[#38352d] text-[#6b675e] hover:text-[#ece9e2] opacity-0 group-hover:opacity-100 transition-opacity ml-1"
+                    title="Close Tab"
                   >
                     <X className="w-3 h-3" />
                   </button>

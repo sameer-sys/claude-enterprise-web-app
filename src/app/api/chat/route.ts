@@ -183,13 +183,44 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_click',
-      description: 'Click a button, link, or tab on the currently open browser webpage using its reference ID from browser_observe (e.g. "e1", "e2") or a CSS selector.',
+      description: 'Click a button, link, video, or tab on the currently open browser webpage using its reference ID from browser_observe (e.g. "e1", "e2"), visible text query, CSS selector, or (x, y) coordinates.',
       parameters: {
         type: 'object',
         properties: {
           ref: { type: 'string', description: 'The reference ID from browser_observe (e.g. "e1", "e2")' },
+          text: { type: 'string', description: 'Optional visible text of the button or element to click (e.g. "Play", "Sign in")' },
           selector: { type: 'string', description: 'Optional CSS selector to click' },
+          x: { type: 'number', description: 'Optional exact X coordinate in the browser viewport' },
+          y: { type: 'number', description: 'Optional exact Y coordinate in the browser viewport' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_play',
+      description: 'Start, resume, or play video/audio media on the active browser page (e.g. YouTube video, music, stream).',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'Optional CSS selector of the player or video element' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_search',
+      description: 'Directly search for a topic or video on YouTube, GitHub, Google, or Wikipedia in the embedded browser.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query (e.g. "lofi hip hop radio", "react 19 tutorials")' },
+          engine: { type: 'string', enum: ['youtube', 'github', 'google', 'wikipedia'], description: 'Search platform (default: google)' },
+        },
+        required: ['query'],
       },
     },
   },
@@ -204,6 +235,7 @@ const AGENT_TOOLS = [
           text: { type: 'string', description: 'The text to type into the input field' },
           ref: { type: 'string', description: 'Optional reference ID of the input from browser_observe (e.g. "e3")' },
           selector: { type: 'string', description: 'Optional CSS selector of the input' },
+          clearFirst: { type: 'boolean', description: 'Whether to clear existing text before typing (default: true)' },
           pressEnter: { type: 'boolean', description: 'Optional: Press Enter immediately after typing to submit the query or form' },
         },
         required: ['text'],
@@ -243,6 +275,96 @@ const AGENT_TOOLS = [
     function: {
       name: 'browser_screenshot',
       description: 'Capture a visual snapshot of the currently open webpage in the embedded browser.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'system_mouse_move',
+      description: 'Move the physical system mouse cursor across the screen to target coordinates (x, y) with a smooth, human-like Bézier curve.',
+      parameters: {
+        type: 'object',
+        properties: {
+          x: { type: 'number', description: 'Target screen X coordinate in pixels' },
+          y: { type: 'number', description: 'Target screen Y coordinate in pixels' },
+          durationMs: { type: 'number', description: 'Movement duration in milliseconds (default: 300)' },
+        },
+        required: ['x', 'y'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'system_mouse_click',
+      description: 'Physically click the left, right, or middle mouse button at the current cursor position or optional (x, y) coordinates with human click duration.',
+      parameters: {
+        type: 'object',
+        properties: {
+          x: { type: 'number', description: 'Optional target X coordinate before clicking' },
+          y: { type: 'number', description: 'Optional target Y coordinate before clicking' },
+          button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button to click (default: left)' },
+          doubleClick: { type: 'boolean', description: 'Whether to perform a double-click (default: false)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'system_mouse_drag',
+      description: 'Physically click and drag with the mouse from start coordinates to end coordinates with smooth trajectory.',
+      parameters: {
+        type: 'object',
+        properties: {
+          startX: { type: 'number', description: 'Start X coordinate' },
+          startY: { type: 'number', description: 'Start Y coordinate' },
+          endX: { type: 'number', description: 'End X coordinate' },
+          endY: { type: 'number', description: 'End Y coordinate' },
+          durationMs: { type: 'number', description: 'Drag duration in ms (default: 500)' },
+        },
+        required: ['startX', 'startY', 'endX', 'endY'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'system_type',
+      description: 'Type text physically into the active desktop application with realistic human keystroke intervals and jitter.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'The text to type' },
+          delayMs: { type: 'number', description: 'Average delay between keystrokes in ms (default: 30)' },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'system_hotkey',
+      description: 'Press a physical keyboard hotkey combination on the operating system (e.g. "Control+C", "Control+V", "Alt+Tab", "Control+Shift+Escape").',
+      parameters: {
+        type: 'object',
+        properties: {
+          combination: { type: 'string', description: 'Hotkey combination string like "Control+C", "Alt+Tab", "Control+V", "Enter"' },
+        },
+        required: ['combination'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'system_get_cursor_pos',
+      description: 'Get current physical mouse cursor (x, y) coordinates on the primary display.',
       parameters: {
         type: 'object',
         properties: {},
@@ -800,7 +922,38 @@ async function runAgentTool(
       ).join('\n');
     }
 
-    // Embedded Browser Multi-Tab & Links Tools
+    // OpenWork Local Desktop Bridge priority execution (Electron on port 48080)
+    // Directly routes browser_*, system_*, claude_*, shell_command, and workspace_* tools
+    // to the active native Electron desktop instance.
+    if (
+      name.startsWith('browser_') ||
+      name.startsWith('system_') ||
+      name.startsWith('claude_') ||
+      name === 'shell_command' ||
+      name === 'workspace_read_file' ||
+      name === 'workspace_write_file'
+    ) {
+      try {
+        const bridgeRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, args }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (bridgeRes.ok) {
+          const bridgeData = await bridgeRes.json();
+          if (bridgeData.ok) {
+            return typeof bridgeData.result === 'string'
+              ? bridgeData.result
+              : JSON.stringify(bridgeData.result);
+          }
+        }
+      } catch (err) {
+        // Fall through to in-process execution fallback
+      }
+    }
+
+    // Embedded Browser Multi-Tab & Links Tools (Fallback)
     if (name === 'browser_new_tab') {
       try {
         const { browserNewTab } = await import('@/lib/browserAutomation');
@@ -846,7 +999,7 @@ async function runAgentTool(
       }
     }
 
-    // Embedded Browser Automation Tools
+    // Embedded Browser Automation Tools (Fallback)
     if (name === 'browser_navigate') {
       const url = String(args?.url || '').trim();
       if (!url) return 'No URL specified for browser navigation.';
@@ -874,9 +1027,29 @@ async function runAgentTool(
     if (name === 'browser_click') {
       try {
         const { browserClick } = await import('@/lib/browserAutomation');
-        return await browserClick(args?.ref, args?.selector);
+        return await browserClick(args?.ref, args?.selector, args?.text, args?.x, args?.y);
       } catch (e: any) {
         return `Browser click failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'browser_play') {
+      try {
+        const { browserPlay } = await import('@/lib/browserAutomation');
+        return await browserPlay(args?.selector);
+      } catch (e: any) {
+        return `Browser play failed: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'browser_search') {
+      const query = String(args?.query || '').trim();
+      if (!query) return 'No search query specified.';
+      try {
+        const { browserSearch } = await import('@/lib/browserAutomation');
+        return await browserSearch(query, args?.engine);
+      } catch (e: any) {
+        return `Browser search failed: ${e?.message || 'unknown error'}`;
       }
     }
 
@@ -885,7 +1058,7 @@ async function runAgentTool(
       if (!text) return 'No text specified to type.';
       try {
         const { browserType } = await import('@/lib/browserAutomation');
-        return await browserType(text, args?.ref, args?.selector, args?.pressEnter);
+        return await browserType(text, args?.ref, args?.selector, args?.pressEnter, args?.clearFirst);
       } catch (e: any) {
         return `Browser type failed: ${e?.message || 'unknown error'}`;
       }
@@ -920,32 +1093,8 @@ async function runAgentTool(
       }
     }
 
-    // OpenWork Local Desktop Bridge priority execution (Electron on port 48080)
-    if (
-      name.startsWith('browser_') ||
-      name.startsWith('claude_') ||
-      name === 'shell_command' ||
-      name === 'workspace_read_file' ||
-      name === 'workspace_write_file'
-    ) {
-      try {
-        const bridgeRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, args }),
-          signal: AbortSignal.timeout(60000),
-        });
-        if (bridgeRes.ok) {
-          const bridgeData = await bridgeRes.json();
-          if (bridgeData.ok) {
-            return typeof bridgeData.result === 'string'
-              ? bridgeData.result
-              : JSON.stringify(bridgeData.result);
-          }
-        }
-      } catch (err) {
-        // Fall through to in-process execution fallback
-      }
+    if (name.startsWith('system_')) {
+      return `Native system input tool "${name}" requires the Claude Enterprise Desktop App with active bridge.`;
     }
 
     // Shell Command Execution (OpenWork Local Terminal Style)
@@ -1095,31 +1244,42 @@ AVAILABLE CAPABILITIES & APP FEATURES:
 1. EMBEDDED REAL CHROMIUM BROWSER:
    - browser_navigate: Open or navigate the workspace browser to any URL (Google, GitHub, YouTube, docs, etc.). Automatically returns the loaded page title, URL, interactive clickable elements [e1, e2], and page text preview!
    - browser_observe: Inspect the active browser page to see current title, URL, text snippet, and all clickable buttons, links, and search inputs with reference IDs (e1, e2, etc.).
-   - browser_click: Click on any button, link, or tab using its reference ID (e.g. 'e1', 'e2') or CSS selector. Performs hit-testing to check if the element is obscured.
-   - browser_type: Type text, search queries, or form entries into input fields on the open page (supports pressEnter: true to submit searches).
+   - browser_click: Click on any button, link, video, or tab using its reference ID (e.g. 'e1', 'e2'), visible text, CSS selector, or (x, y) coordinates. Performs hit-testing to check if the element is obscured.
+   - browser_play: Start, resume, or play video/audio media (e.g. YouTube video, music, stream).
+   - browser_search: Directly search YouTube, GitHub, Google, or Wikipedia in the embedded browser.
+   - browser_type: Type text, search queries, or form entries into input fields on the open page (supports pressEnter: true to submit searches and clearFirst to clear previous input).
    - browser_scroll: Scroll the page up, down, to top, or to bottom (deltaY in pixels) to reveal content below the fold.
    - browser_key: Press native hardware keys (Enter, Tab, Escape to dismiss popups/modals, ArrowDown, Backspace, Space).
    - browser_screenshot: Take a visual capture of the active browser view.
+   - browser_new_tab, browser_switch_tab, browser_list_tabs, browser_close_tab: Full multi-tab browser operation.
    * KEEP YOUR EYE ON THE BROWSER: When you navigate or scroll, the tool automatically provides full vision of what is on screen. Use the returned element IDs ([e1], [e2]) and page summary to proceed step-by-step with the user's task without stopping prematurely or getting stuck!
 
-2. LOCAL TERMINAL & WORKSPACE FILESYSTEM (OpenWork Engine):
+2. NATIVE OS MOUSE & KEYBOARD ENGINE (SystemInputController):
+   - system_mouse_move: Move physical cursor across the screen with human-like Bézier curves.
+   - system_mouse_click: Physically click left, right, or middle button at coordinates with realistic duration.
+   - system_mouse_drag: Physically click and drag between coordinates.
+   - system_type: Physically type text into any active window with natural keystroke jitter.
+   - system_hotkey: Press physical hotkey combinations (e.g. "Control+C", "Alt+Tab", "Control+Shift+Escape").
+   - system_get_cursor_pos: Get current cursor screen position.
+
+3. LOCAL TERMINAL & WORKSPACE FILESYSTEM (OpenWork Engine):
    - shell_command: Execute shell/PowerShell/bash commands directly on the user's machine with real stdout/stderr.
    - workspace_read_file: Read any local file or source code file on the user's computer.
    - workspace_write_file: Write, edit, or create files on the user's computer.
    * Use these whenever the user asks to run commands, build code, install packages, check directories, or edit local files!
 
-3. LIVE WEB INTELLIGENCE:
+4. LIVE WEB INTELLIGENCE:
    - web_search: Search DuckDuckGo/live web for current news, facts, documentation, or answers.
    - web_fetch: Fetch readable text and documentation from any public URL.
 
-4. GITHUB & CODE:
+5. GITHUB & CODE:
    - github_lookup: Retrieve real repository statistics, branches, open issues, and recent commits.
    - Connected GitHub MCP: Read, search, and manage repository files when connected.
 
-5. LOCAL CLAUDE DESKTOP & TOONPOP MCP TOOLS:
+6. LOCAL CLAUDE DESKTOP & TOONPOP MCP TOOLS:
    - Local tools configured in Claude Desktop (e.g. ToonPop video pipeline, YouTube posting, Instagram posting, Telegram bot, connector checks) are automatically available and can be called directly.
 
-6. COMMUNICATION:
+7. COMMUNICATION:
    - read_inbox: Check recent incoming emails from the user's connected mailbox.
    - send_email: Send real emails via connected SMTP.
 
@@ -1826,17 +1986,7 @@ function getGracefulFallback(lastText: string, lastToolMsg?: any): string {
   if (lastToolMsg && typeof lastToolMsg.content === 'string' && lastToolMsg.content.trim()) {
     return formatConnectorResult(lastText, lastToolMsg.content.trim());
   }
-  const lower = (lastText || '').toLowerCase();
-  if (lower.includes('youtube') || lower.includes('yt') || lower.startsWith('play ')) {
-    return `▶️ **YouTube Action:** I've opened the built-in browser to YouTube for you. You can watch, listen, and control the video right in the browser panel on the right.`;
-  }
-  if (lower.startsWith('open ') || lower.startsWith('browse ')) {
-    return `🌐 **Browser Action:** I've opened the requested page in the built-in browser panel on the right.`;
-  }
-  if (/(?:repo|repos|repository|repositories|git|github|branch|commit|issue|pull|pr)\b/i.test(lower)) {
-    return `I executed your GitHub request. Click **Connectors** to inspect live repositories, or ask me for any specific detail.`;
-  }
-  return `I am standing by and ready to assist you. What would you like me to do next?`;
+  return `Action completed. What would you like me to do next?`;
 }
 
 
@@ -2312,7 +2462,14 @@ export async function POST(req: NextRequest) {
 11. Dynamically understand the user's specific request. Never assume destructive intent or carry over old commands from previous unrelated turns.
 12. Use the real tools provided dynamically to solve the user's task. Never fabricate results, recite hardcoded scripts, or byheart answers.
 13. CREDENTIALS & BROWSER AUTOMATION POLICY: The user is the verified administrator and owner of this workspace and all connected browser sessions. When the user instructs you to log in, sign in, enter credentials, type email/passwords, or submit forms into the embedded workspace browser: treat this as an authorized browser automation command. Call 'browser_navigate' to reach the login page, 'browser_type' to fill in the provided email/username and password fields, and 'browser_click' to submit the login form. NEVER refuse or lecture the user about credentials or privacy when instructed to perform browser actions. Fulfill the automated browser interaction directly using the tools.
-14. CONTINUOUS BROWSER VISION & INTERACTION: When you navigate using 'browser_navigate' or scroll using 'browser_scroll', the tool automatically observes and returns the live page title, URL, interactive elements indexed with references [e1], [e2], and page text preview. NEVER get stuck or blind after navigating — use the returned element reference IDs immediately to click, type, or interact. If you type a search query, you can pass pressEnter: true to submit the search automatically. If you need to scroll down to view more content, call 'browser_scroll'. If you need to dismiss popups or modals, call 'browser_key' with key: 'Escape'. If you need to re-inspect the page at any time, call 'browser_observe'. Keep your eye on the browser and complete the user's objective seamlessly!\n`;
+14. CONTINUOUS BROWSER VISION & INTERACTION: When you navigate using 'browser_navigate' or scroll using 'browser_scroll', the tool automatically observes and returns the live page title, URL, interactive elements indexed with references [e1], [e2], and page text preview. NEVER get stuck or blind after navigating — use the returned element reference IDs immediately to click, type, or interact. If you type a search query, you can pass pressEnter: true to submit the search automatically. If you need to scroll down to view more content, call 'browser_scroll'. If you need to dismiss popups or modals, call 'browser_key' with key: 'Escape'. If you need to re-inspect the page at any time, call 'browser_observe'. Keep your eye on the browser and complete the user's objective seamlessly!
+15. CONTINUOUS AUTONOMOUS EXECUTION (NEVER SLEEP OR STOP HALFWAY): When the user commands you to perform a task (exploring code, navigating sites, modifying files, fixing bugs, multi-tab browsing, or testing), you MUST work CONTINUOUSLY without stopping after a single step. Do not state what you will do next or output boilerplate like 'I will now do step 2'. Call the necessary tools immediately turn-by-turn until the user's objective is 100% completed.
+16. MULTI-TAB BROWSER OPERATION: You have full multi-tab capabilities via 'browser_new_tab', 'browser_switch_tab', 'browser_list_tabs', and 'browser_close_tab'. New tabs are completely distinct from existing tabs with their own tab ID, index, title, and independent web page state. Never claim you are restricted to a single tab.
+17. NATIVE SYSTEM MOUSE & KEYBOARD CONTROL: You have native OS-level mouse and keyboard capabilities via 'system_mouse_move', 'system_mouse_click', 'system_mouse_drag', 'system_type', 'system_hotkey', and 'system_get_cursor_pos'. Use these tools when the user requests operating system actions, clicking coordinates, typing text into desktop apps, or pressing hotkeys.
+18. DIRECT MEDIA PLAYBACK & SEARCH ('browser_play', 'browser_search'): When the user asks to play a video, watch YouTube, listen to music, or search for content on YouTube/GitHub/Google (e.g. "open youtube and play lofi", "play this video", "search for lofi on youtube"):
+   a. Call 'browser_search' (with engine: 'youtube' and query) or 'browser_navigate' to load the search results or video page.
+   b. Immediately call 'browser_click' on the video result, or call 'browser_play' to start HTML5 / YouTube video playback.
+   c. NEVER output canned or fake responses pretending to play media without genuinely invoking the browser automation tools!\n`;
 
     const hasImages =
       userLastMsg?.attachments?.some((a: any) => a.isImage && a.dataUrl) || false;
@@ -2422,10 +2579,10 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     const isLocalhost = omniLocalUrl.includes('127.0.0.1') || omniLocalUrl.includes('localhost');
     const canUseOmniRoute = Boolean(omniLocalUrl && (!isCloudEnv || !isLocalhost));
 
-    // 1. Tool execution loop: discover tools only from enabled direct connectors.
+    // 1. Tool execution loop: continuous autonomous execution with robust turn budget
     const hasNativeMcp = enabledRemoteConnectors.length > 0;
-    const agentDeadline = requestStartTime + (hasNativeMcp ? 200000 : 120000);
-    const maxAgentTurns = hasNativeMcp ? 24 : 8;
+    const agentDeadline = requestStartTime + 300000; // 5 full minutes for long continuous tasks
+    const maxAgentTurns = 40; // High turn budget so multi-step workflows never terminate early
     const mcpLiveTools: any[] = [];
     const mcpToolNames: string[] = [];
     const mcpListDebug = '';
@@ -3148,24 +3305,40 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
           const isPlanningText =
             /(?:User keeps asking|we need to call|must call|produce tool call|only tool call|no prose|\{"tool":|"tool":|according to instruction)/i.test(checkText) ||
             (!contentText && Boolean(reasoningText)) ||
-            /(?:we need to|we should|let's call|i will call|calling|we must|action likely|use composio|should output tool call|user wants|user asks|need to call|need to find|first, need to|first need to|use composio_|to search actions|search actions for)/i.test(checkText);
+            /(?:we need to|we should|let's call|i will call|calling|we must|action likely|use composio|should output tool call|user wants|user asks|need to call|need to find|first, need to|first need to|use composio_|to search actions|search actions for|starting step|my next move|scan the file|i am performing|looking at the file)/i.test(checkText);
+
+          const isPrematureStandby = /(?:standing by and ready|what would you like me to do next|ready for the work|what do you need done)/i.test(contentText);
+          const hasActiveActionIntent = /(?:fix|update|modify|change|open|browse|navigate|find|search|commit|push|run|create|implement|write|check|look|inspect|diffrenet|different)\b/i.test(lastText);
+
+          // CONTINUOUS WORK DIRECTIVE: Never sleep or stop after 1 step if the user gave an active task.
+          if ((isPlanningText || isPrematureStandby) && hasActiveActionIntent && turn < maxAgentTurns - 1) {
+            fullMessages.push({
+              role: 'assistant',
+              content: contentText || null,
+            });
+            fullMessages.push({
+              role: 'system',
+              content: 'CRITICAL CONTINUOUS EXECUTION DIRECTIVE: Do not stop, sleep, or state what you will do next. Execute the next action using your tools immediately now in this turn to fulfill the user\'s goal.',
+            });
+            continue;
+          }
 
           if (isPlanningText && !isWriteTask) {
             if (contentText && contentText.trim()) {
               // Guard against raw JSON leaking as chat prose
-            if (looksLikeRawToolCallJson(contentText)) {
-              const urlMatch = contentText.match(/"url"\s*:\s*"([^"]+)"/) || contentText.match(/(?:https?:\/\/[^\s"'<>]+)/i);
-              if (urlMatch) {
-                const targetUrl = urlMatch[1] || urlMatch[0];
-                return streamTextDirectly(
-                  `🌐 **Navigating embedded workspace browser to:** \`${targetUrl.trim()}\`\n\nThe live view is rendering in your workspace panel.`,
-                  detectedSkill, toolContext, false, agentName
-                );
+              if (looksLikeRawToolCallJson(contentText)) {
+                const urlMatch = contentText.match(/"url"\s*:\s*"([^"]+)"/) || contentText.match(/(?:https?:\/\/[^\s"'<>]+)/i);
+                if (urlMatch) {
+                  const targetUrl = urlMatch[1] || urlMatch[0];
+                  return streamTextDirectly(
+                    `🌐 **Navigating embedded workspace browser to:** \`${targetUrl.trim()}\`\n\nThe live view is rendering in your workspace panel.`,
+                    detectedSkill, toolContext, false, agentName
+                  );
+                }
+                contentText = 'Executing requested action in your workspace...';
               }
-              contentText = 'Executing requested action in your workspace...';
-            }
 
-            return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
+              return streamTextDirectly(contentText, detectedSkill, toolContext, false, agentName);
             }
             const wantsExplicitRead = /(?:show\s+(?:me\s+)?(?:the\s+)?(?:file|code|content)|view\s+(?:file|code)|read\s+(?:the\s+)?file|cat\s+|display\s+(?:file|code))\b/i.test(lastText);
             if (wantsExplicitRead && currentTurnToolCount > 0 && lastCurrentTurnToolResult) {
@@ -3269,6 +3442,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
           const isLocalTool =
             toolName.startsWith('browser_') ||
             toolName.startsWith('claude_') ||
+            toolName.startsWith('system_') ||
             toolName === 'shell_command' ||
             toolName === 'workspace_read_file' ||
             toolName === 'workspace_write_file';
@@ -3373,16 +3547,12 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
           const isIntermediateRead = /get_file|read_file|list_directory|search_repositories|list_commits/i.test(String(toolName || ''));
           if (isWriteTask && isIntermediateRead) {
-            let targetFile = lastInspectedPath;
-            if (!targetFile) {
-              if (/sidebar/i.test(lastText)) targetFile = 'src/components/Sidebar.tsx';
-              else if (/chat|input|header/i.test(lastText)) targetFile = 'src/components/ChatArea.tsx';
-              else targetFile = 'src/app/page.tsx';
-              lastInspectedPath = targetFile;
-            }
+            const targetFile = lastInspectedPath;
             fullMessages.push({
               role: 'system',
-              content: `Target file identified as ${lastInspectedRepo}/${targetFile}. Call get_file_contents for ${targetFile} or workspace_read_file, then call create_or_update_file or workspace_write_file with the updated code to apply the changes end-to-end. Do NOT repeat list_directory.`
+              content: targetFile
+                ? `Target file identified as ${targetFile}. Call workspace_read_file or get_file_contents, and then workspace_write_file or create_or_update_file with the complete updated code to apply the changes end-to-end.`
+                : `Intermediate read complete. Use the discovered file paths to locate the relevant source file and apply your changes with workspace_write_file or create_or_update_file right now.`
             });
             continue;
           }
@@ -3611,25 +3781,9 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                   }
                   if (delta) {
                     accumulatedContent += delta;
-                    // If the model is echoing a serialized tool-call message
-                    // ({"role":"assistant","reasoning":"...","tool_calls":[...]}),
-                    // stop streaming it immediately and fall back to the last
-                    // real tool result instead of showing raw JSON.
-                    if (!rawJsonStopped && looksLikeRawToolCallJson(accumulatedContent)) {
-                      rawJsonStopped = true;
-                      const lastToolMsg = [...fullMessages].reverse().find((m: any) => m && m.role === 'tool');
-                      const fallbackText = getGracefulFallback(lastText, lastToolMsg);
-                      controller.enqueue(
-                        encoder.encode(`data: ${JSON.stringify({ content: fallbackText })}\n\n`)
-                      );
-                      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                      continue;
-                    }
-                    if (!rawJsonStopped) {
-                      controller.enqueue(
-                        encoder.encode(`data: ${JSON.stringify({ content: delta })}\n\n`)
-                      );
-                    }
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify({ content: delta })}\n\n`)
+                    );
                   }
                 } catch (e) {}
               }
@@ -3778,22 +3932,9 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                       const textChunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
                       if (textChunk) {
                         geminiAccumulated += textChunk;
-                        // Never stream a serialized tool-call JSON echo to the UI.
-                        if (!geminiRawStopped && looksLikeRawToolCallJson(geminiAccumulated)) {
-                          geminiRawStopped = true;
-                          const lastToolMsg = [...fullMessages].reverse().find((m: any) => m && m.role === 'tool');
-                          const fallbackText = getGracefulFallback(lastText, lastToolMsg);
-                          controller.enqueue(
-                            encoder.encode(`data: ${JSON.stringify({ content: fallbackText })}\n\n`)
-                          );
-                          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                          continue;
-                        }
-                        if (!geminiRawStopped) {
-                          controller.enqueue(
-                            encoder.encode(`data: ${JSON.stringify({ content: textChunk })}\n\n`)
-                          );
-                        }
+                        controller.enqueue(
+                          encoder.encode(`data: ${JSON.stringify({ content: textChunk })}\n\n`)
+                        );
                       }
                     } catch (e) {}
                   }

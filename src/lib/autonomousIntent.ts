@@ -178,10 +178,16 @@ export function parseAutonomousIntent(
   const raw = String(userText || '').trim();
   const lower = raw.toLowerCase();
 
+  // Technical inquiry, coding, or feature request detection
+  const isDevelopmentOrTechnicalRequest = (
+    /\b(update|feature|create|implement|modify|change|fix|debug|refactor|write|code|function|algorithm|component|why\s+are\s+you|why\s+did\s+you|explain|how\s+to|what\s+is|tell\s+me|can\s+you|is\s+it\s+done)\b/i.test(lower) &&
+    !/\b(open\s+https?:\/\/|navigate\s+to\s+https?:\/\/|go\s+to\s+https?:\/\/|visit\s+https?:\/\/)\b/i.test(lower)
+  );
+
   // Pure coding or explanation prompt detection
-  const isPureCodingOrReasoning = (
+  const isPureCodingOrReasoning = isDevelopmentOrTechnicalRequest || (
     /\b(write|create|implement|explain|how\s+to|what\s+is|why\s+does|script|code|function|algorithm)\b/i.test(lower) &&
-    !/\b(in\s+browser|in\s+the\s+browser|on\s+browser|open\s+in\s+browser|navigate\s+to|go\s+to|visit|from\s+the\s+browser|from\s+browser|via\s+browser|use\s+(?:the\s+)?browser|through\s+(?:the\s+)?browser)\b/i.test(lower)
+    !/\b(open\s+https?:\/\/|navigate\s+to|visit)\b/i.test(lower)
   );
 
   // Shell / CLI directive detection
@@ -251,17 +257,16 @@ export function parseAutonomousIntent(
   }
 
   // 3. Detect Action Types & Directives
-  const hasBrowserDirective = (
-    /\b(browser|browse|navigate|open|visit|launch|go\s+to|pull\s+up|load|show|jump\s+on|check\s+on|view)\b/i.test(lower) ||
-    lower.includes('in the browser') ||
-    lower.includes('on browser') ||
-    lower.includes('from the browser') ||
-    lower.includes('from browser') ||
-    lower.includes('via browser') ||
-    lower.includes('cant see') ||
-    Boolean(explicitUrlMatch) ||
-    Boolean(domainMatch) ||
-    Boolean(matchedServiceKey)
+  // Never hijack development, coding, or feature inquiry prompts into browser navigation
+  const hasExplicitBrowserDirective = (
+    !isDevelopmentOrTechnicalRequest &&
+    (
+      Boolean(explicitUrlMatch) ||
+      Boolean(domainMatch) ||
+      Boolean(matchedServiceKey) ||
+      /\b(navigate\s+to|visit|launch\s+browser|open\s+browser|open\s+in\s+browser|go\s+to\s+https?:\/\/)\b/i.test(lower) ||
+      (isExplicitFollowUp && (Boolean(explicitUrlMatch) || Boolean(domainMatch) || Boolean(matchedServiceKey)))
+    )
   );
 
   const hasLoginIntent = (
@@ -274,8 +279,8 @@ export function parseAutonomousIntent(
   );
 
   // 4. Resolve Browser Action
-  if (hasBrowserDirective) {
-    let targetUrl = 'https://www.google.com';
+  if (hasExplicitBrowserDirective && (explicitUrlMatch || domainMatch || matchedServiceKey || hasSearchIntent)) {
+    let targetUrl = '';
     let subGoal: AutonomousBrowserPlan['subGoal'] = 'NAVIGATE';
 
     // A. Explicit URL
@@ -329,20 +334,22 @@ export function parseAutonomousIntent(
       }
     }
 
-    return {
-      isActionable: true,
-      category: 'BROWSER',
-      confidence: 0.96,
-      reasoning: `Autonomous browsing directive targeting ${targetUrl} (goal: ${subGoal}).`,
-      browser: {
-        url: targetUrl,
-        subGoal,
-        credentials,
-        description: subGoal === 'LOGIN'
-          ? `Opening ${targetUrl} and preparing automated login.`
-          : `Navigating workspace browser to ${targetUrl}.`,
-      },
-    };
+    if (targetUrl) {
+      return {
+        isActionable: true,
+        category: 'BROWSER',
+        confidence: 0.96,
+        reasoning: `Autonomous browsing directive targeting ${targetUrl} (goal: ${subGoal}).`,
+        browser: {
+          url: targetUrl,
+          subGoal,
+          credentials,
+          description: subGoal === 'LOGIN'
+            ? `Opening ${targetUrl} and preparing automated login.`
+            : `Navigating workspace browser to ${targetUrl}.`,
+        },
+      };
+    }
   }
 
   // 5. Conversational Reasoning
