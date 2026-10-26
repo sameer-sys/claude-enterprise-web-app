@@ -2573,6 +2573,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
       : undefined;
     const GROQ_PARTS = ['gsk_', 'xbRa33OEsjTbAc45', 'IsuZWGdyb3FYzXpKR04B', 'SrPTqoxDfPJTU6s1'];
     const groqKey = String(process.env.GROQ_API_KEY || GROQ_PARTS.join('')).trim();
+    const nvidiaKey = String(process.env.NVIDIA_API_KEY || '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').trim();
     const omniMasterKey = String(process.env.OMNIROUTE_API_KEY || 'sk-a982e8cabcf568c6-8a2c23-71657989').trim();
     const omniLocalUrl = omniRouteUrl || process.env.OMNIROUTE_URL || 'http://127.0.0.1:20128/v1/chat/completions';
     const isCloudEnv = Boolean(process.env.VERCEL || process.env.AWS_REGION);
@@ -3090,6 +3091,40 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
               signal: AbortSignal.timeout(Math.max(5000, agentDeadline - Date.now())),
             });
             if (!agentResp.ok) agentResp = null;
+          } catch {
+            agentResp = null;
+          }
+        }
+
+        // Priority 2.5: NVIDIA NIM Cloud Engine (Nemotron 70B / Mistral Large)
+        if (!agentResp && nvidiaKey) {
+          try {
+            const compactTools = effectiveTools.slice(0, 36);
+            const compactMessages = fullMessages.length > 8 ? [fullMessages[0], ...fullMessages.slice(-7)] : fullMessages;
+            const nvidiaModels = ['nvidia/llama-3.1-nemotron-70b-instruct', 'meta/llama-3.2-11b-vision-instruct', 'mistralai/mistral-large-2-instruct'];
+            for (const nModel of nvidiaModels) {
+              try {
+                agentResp = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${nvidiaKey}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    model: nModel,
+                    messages: compactMessages,
+                    tools: compactTools.length > 0 ? compactTools : undefined,
+                    tool_choice: 'auto',
+                    max_tokens: 4096,
+                  }),
+                  signal: AbortSignal.timeout(Math.min(10000, Math.max(3000, agentDeadline - Date.now()))),
+                });
+                if (agentResp && agentResp.ok) break;
+                agentResp = null;
+              } catch {
+                agentResp = null;
+              }
+            }
           } catch {
             agentResp = null;
           }
@@ -3695,6 +3730,19 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         },
         models: ['boss'],
         tag: 'boss-local',
+      });
+    }
+
+    // Priority 2.5: NVIDIA NIM Cloud Engine
+    if (nvidiaKey) {
+      candidateEndpoints.push({
+        url: 'https://integrate.api.nvidia.com/v1/chat/completions',
+        headers: {
+          Authorization: `Bearer ${nvidiaKey}`,
+          'Content-Type': 'application/json',
+        },
+        models: ['nvidia/llama-3.1-nemotron-70b-instruct', 'meta/llama-3.2-11b-vision-instruct', 'mistralai/mistral-large-2-instruct'],
+        tag: 'nvidia-cloud',
       });
     }
 
