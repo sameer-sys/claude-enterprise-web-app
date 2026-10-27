@@ -2385,6 +2385,7 @@ export async function POST(req: NextRequest) {
       hasLocalBridge = false,
       isElectron = false,
       clientToolResult,
+      clientToolHistory,
     } = await req.json();
 
     const { cloneNativeConnectors } = await import('@/lib/nativeConnectors');
@@ -2547,23 +2548,28 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
       }),
     ];
 
-    if (clientToolResult && clientToolResult.toolCallId) {
+    const runningClientTools = Array.isArray(clientToolHistory) && clientToolHistory.length > 0
+      ? clientToolHistory
+      : (clientToolResult && clientToolResult.toolCallId ? [clientToolResult] : []);
+
+    for (const h of runningClientTools) {
+      if (!h || !h.toolCallId) continue;
       fullMessages.push({
         role: 'assistant',
         content: null,
         tool_calls: [{
-          id: clientToolResult.toolCallId,
+          id: h.toolCallId,
           type: 'function',
           function: {
-            name: clientToolResult.toolName,
-            arguments: typeof clientToolResult.args === 'string' ? clientToolResult.args : JSON.stringify(clientToolResult.args || {})
+            name: h.toolName,
+            arguments: typeof h.args === 'string' ? h.args : JSON.stringify(h.args || {})
           }
         }]
       });
       fullMessages.push({
         role: 'tool',
-        tool_call_id: clientToolResult.toolCallId,
-        content: typeof clientToolResult.result === 'string' ? clientToolResult.result : JSON.stringify(clientToolResult.result)
+        tool_call_id: h.toolCallId,
+        content: typeof h.result === 'string' ? h.result : JSON.stringify(h.result)
       });
     }
 
@@ -3011,6 +3017,24 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     let mcpNudges = 0;
     const requiredMcpToolCalls = isCompoundMultiStepRequest ? 2 : (connectorRequest ? 1 : 0);
 
+    const safeCompactMessages = (msgs: any[], maxCount: number = 18): any[] => {
+      if (!Array.isArray(msgs) || msgs.length <= maxCount) return msgs;
+      const systemMsg = msgs[0];
+      const pool = msgs.slice(1);
+      let startIdx = Math.max(0, pool.length - (maxCount - 1));
+      while (startIdx < pool.length) {
+        const m = pool[startIdx];
+        if (m.role === 'user') break;
+        if (m.role === 'assistant' && (!m.tool_calls || m.tool_calls.length === 0)) break;
+        startIdx++;
+      }
+      const slice = pool.slice(startIdx);
+      while (slice.length > 0 && slice[0].role === 'tool') {
+        slice.shift();
+      }
+      return [systemMsg, ...slice];
+    };
+
     for (let turn = 0; turn < maxAgentTurns; turn++) {
       if (Date.now() > agentDeadline) break;
 
@@ -3071,9 +3095,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         if (!agentResp && canUseOmniRoute && (omniMasterKey || omniLocalUrl)) {
           try {
             const compactTools = effectiveTools.slice(0, 36);
-            const compactMessages = fullMessages.length > 8
-              ? [fullMessages[0], ...fullMessages.slice(-7)]
-              : fullMessages;
+            const compactMessages = safeCompactMessages(fullMessages);
 
             agentResp = await fetch(omniLocalUrl, {
               method: 'POST',
@@ -3100,7 +3122,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         if (!agentResp && nvidiaKey) {
           try {
             const compactTools = effectiveTools.slice(0, 36);
-            const compactMessages = fullMessages.length > 8 ? [fullMessages[0], ...fullMessages.slice(-7)] : fullMessages;
+            const compactMessages = safeCompactMessages(fullMessages);
             const nvidiaModels = ['nvidia/llama-3.1-nemotron-70b-instruct', 'meta/llama-3.2-11b-vision-instruct', 'mistralai/mistral-large-2-instruct'];
             for (const nModel of nvidiaModels) {
               try {
@@ -3134,6 +3156,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         if (!agentResp && groqKey) {
           try {
             const compactTools = effectiveTools.slice(0, 36);
+            const compactMessages = safeCompactMessages(fullMessages);
             agentResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
               headers: {
@@ -3142,7 +3165,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
               },
               body: JSON.stringify({
                 model: 'openai/gpt-oss-120b',
-                messages: fullMessages.length > 8 ? [fullMessages[0], ...fullMessages.slice(-7)] : fullMessages,
+                messages: compactMessages,
                 tools: compactTools,
                 tool_choice: 'auto',
                 max_tokens: 4096,
@@ -3163,7 +3186,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                   },
                   body: JSON.stringify({
                     model: 'openai/gpt-oss-20b',
-                    messages: fullMessages.length > 8 ? [fullMessages[0], ...fullMessages.slice(-7)] : fullMessages,
+                    messages: compactMessages,
                     tools: compactTools,
                     tool_choice: 'auto',
                     max_tokens: 4096,
@@ -3700,6 +3723,23 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
       content: 'Tool and connector execution has already completed. Do NOT emit function calls, XML tool tags (<tool_call>, <function=...>), or raw JSON objects. Formulate and deliver your final, comprehensive response in clean, well-structured Markdown.'
     });
 
+    const sanitizedFinalMessages = fullMessages.map((m) => {
+      if (m.role === 'tool') {
+        return {
+          role: 'user',
+          content: `[Observation/Tool Result]:\n${m.content || ''}`,
+        };
+      }
+      if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+        const callsDesc = m.tool_calls.map((c: any) => `${c.function?.name || 'tool'}(${c.function?.arguments || ''})`).join(', ');
+        return {
+          role: 'assistant',
+          content: m.content || `Executed tool action: ${callsDesc}`,
+        };
+      }
+      return m;
+    });
+
     const candidateEndpoints: Array<{
       url: string;
       headers: Record<string, string>;
@@ -3767,7 +3807,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
             headers: endpoint.headers,
             body: JSON.stringify({
               model: targetModel,
-              messages: fullMessages,
+              messages: sanitizedFinalMessages,
               stream: true,
               max_tokens: DEFAULT_MAX_TOKENS,
             }),

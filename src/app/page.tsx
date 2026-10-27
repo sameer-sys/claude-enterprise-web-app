@@ -1089,6 +1089,12 @@ export default function Home() {
       let accumulatedContent = '';
       let accumulatedThinking = '';
       let sseBuffer = '';
+      const runningToolHistory: Array<{
+        toolCallId: string;
+        toolName: string;
+        args: any;
+        result: any;
+      }> = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1147,13 +1153,17 @@ export default function Home() {
                 execResult = `Execution error: ${err?.message || err}`;
               }
 
+              runningToolHistory.push({
+                toolCallId: data.id,
+                toolName: data.name,
+                args: data.args,
+                result: execResult,
+              });
+
               if (data.name.startsWith('browser_')) {
                 setIsBrowserPanelOpen(true);
                 if (data.args?.url) {
                   setBrowserUrl(data.args.url);
-                  if (typeof window !== 'undefined' && (window as any).electronAPI?.browser?.navigate) {
-                    (window as any).electronAPI.browser.navigate(data.args.url);
-                  }
                 }
               }
 
@@ -1165,6 +1175,7 @@ export default function Home() {
                   result: execResult,
                   args: data.args,
                 },
+                clientToolHistory: runningToolHistory,
               };
 
               const followUpRes = await fetch('/api/chat', {
@@ -1177,9 +1188,10 @@ export default function Home() {
               if (followUpRes.ok && followUpRes.body) {
                 reader = followUpRes.body.getReader();
                 sseBuffer = '';
-                accumulatedContent = '';
                 switchedReader = true;
                 break;
+              } else {
+                console.error('[CHAT FOLLOW-UP ERROR]', followUpRes.status, followUpRes.statusText);
               }
             }
 

@@ -64,6 +64,7 @@ export default function BrowserPanel({
   const isResizingRef = useRef<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const lastLoadedUrlRef = useRef<string>('');
 
   const normalizeUrl = (raw: string): string => {
     const trimmed = raw.trim();
@@ -92,6 +93,7 @@ export default function BrowserPanel({
     }
   }, []);
 
+  // 1. Mount / Viewport Attachment Effect (only depends on isOpen)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const api = (window as any).electronAPI?.browser;
@@ -112,14 +114,12 @@ export default function BrowserPanel({
         });
         if (initialUrl) {
           const target = normalizeUrl(initialUrl);
-          setCurrentUrl(target);
-          setInputUrl(target);
-          api?.navigate?.(target);
-          fetch('http://127.0.0.1:48080/api/execute-tool', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: 'browser_navigate', args: { url: target } }),
-          }).catch(() => {});
+          if (target !== lastLoadedUrlRef.current) {
+            lastLoadedUrlRef.current = target;
+            setCurrentUrl(target);
+            setInputUrl(target);
+            api.navigate?.(target);
+          }
         }
       }
 
@@ -136,18 +136,18 @@ export default function BrowserPanel({
           })));
           if (data.activeTabId) setActiveTabId(data.activeTabId);
           if (data.url) {
+            lastLoadedUrlRef.current = data.url;
             setCurrentUrl(data.url);
             setInputUrl(data.url);
-            onUrlChange?.(data.url);
           }
         }
       });
 
       const cleanupNav = api.onNavigated?.((data: any) => {
         if (data?.url) {
+          lastLoadedUrlRef.current = data.url;
           setCurrentUrl(data.url);
           setInputUrl(data.url);
-          onUrlChange?.(data.url);
           setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, url: data.url, title: data.title || t.title } : t));
         }
       });
@@ -163,7 +163,20 @@ export default function BrowserPanel({
         api.hide?.();
       };
     }
-  }, [isOpen, initialUrl, onUrlChange, syncBounds, activeTabId]);
+  }, [isOpen, syncBounds]);
+
+  // 2. React to external URL changes without unmounting or infinite reloading
+  useEffect(() => {
+    if (!isOpen || !initialUrl) return;
+    const target = normalizeUrl(initialUrl);
+    if (target && target !== lastLoadedUrlRef.current) {
+      lastLoadedUrlRef.current = target;
+      setCurrentUrl(target);
+      setInputUrl(target);
+      const api = (window as any).electronAPI?.browser;
+      api?.navigate?.(target);
+    }
+  }, [isOpen, initialUrl]);
 
   useEffect(() => {
     const t = setTimeout(syncBounds, 60);
@@ -213,6 +226,7 @@ export default function BrowserPanel({
 
   const navigateTo = (target: string) => {
     const clean = normalizeUrl(target);
+    lastLoadedUrlRef.current = clean;
     setCurrentUrl(clean);
     setInputUrl(clean);
     onUrlChange?.(clean);
