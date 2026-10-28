@@ -10,6 +10,7 @@ export const maxDuration = 300;
 
 const BOSS_TARGET_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
 const DEFAULT_MAX_TOKENS = 8192;
+const isCloudEnv = Boolean(process.env.VERCEL || process.env.AWS_REGION);
 
 // Tracks the last deterministic Composio action per user so follow-up
 // verification requests ("check closely", "check again") re-run the real
@@ -924,21 +925,22 @@ async function runAgentTool(
 
     // OpenWork Local Desktop Bridge priority execution (Electron on port 48080)
     // Directly routes browser_*, system_*, claude_*, shell_command, and workspace_* tools
-    // to the active native Electron desktop instance.
+    // to the active native Electron desktop instance (only in local runtime, never on cloud serverless).
     if (
-      name.startsWith('browser_') ||
+      !isCloudEnv &&
+      (name.startsWith('browser_') ||
       name.startsWith('system_') ||
       name.startsWith('claude_') ||
       name === 'shell_command' ||
       name === 'workspace_read_file' ||
-      name === 'workspace_write_file'
+      name === 'workspace_write_file')
     ) {
       try {
         const bridgeRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, args }),
-          signal: AbortSignal.timeout(60000),
+          signal: AbortSignal.timeout(3000),
         });
         if (bridgeRes.ok) {
           const bridgeData = await bridgeRes.json();
@@ -2605,13 +2607,12 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     const nvidiaKey = String(process.env.NVIDIA_API_KEY || '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').trim();
     const omniMasterKey = String(process.env.OMNIROUTE_API_KEY || 'sk-a982e8cabcf568c6-8a2c23-71657989').trim();
     const omniLocalUrl = omniRouteUrl || process.env.OMNIROUTE_URL || 'http://127.0.0.1:20128/v1/chat/completions';
-    const isCloudEnv = Boolean(process.env.VERCEL || process.env.AWS_REGION);
     const isLocalhost = omniLocalUrl.includes('127.0.0.1') || omniLocalUrl.includes('localhost');
     const canUseOmniRoute = Boolean(omniLocalUrl && (!isCloudEnv || !isLocalhost));
 
     // 1. Tool execution loop: continuous autonomous execution with robust turn budget
     const hasNativeMcp = enabledRemoteConnectors.length > 0;
-    const agentDeadline = requestStartTime + 300000; // 5 full minutes for long continuous tasks
+    const agentDeadline = requestStartTime + (isCloudEnv ? 55000 : 300000);
     const maxAgentTurns = 40; // High turn budget so multi-step workflows never terminate early
     const mcpLiveTools: any[] = [];
     const mcpToolNames: string[] = [];
@@ -2800,19 +2801,21 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     }
 
     // Dynamic discovery of ANY connector/tool registered on the Local Bridge
-    try {
-      const bridgeToolsRes = await fetch('http://127.0.0.1:48080/api/tools', { signal: AbortSignal.timeout(2000) });
-      if (bridgeToolsRes.ok) {
-        const bridgeData = await bridgeToolsRes.json();
-        if (Array.isArray(bridgeData?.tools)) {
-          for (const bTool of bridgeData.tools) {
-            if (!allToolsMap.has(bTool.function.name)) {
-              allToolsMap.set(bTool.function.name, bTool);
+    if (!isCloudEnv) {
+      try {
+        const bridgeToolsRes = await fetch('http://127.0.0.1:48080/api/tools', { signal: AbortSignal.timeout(1000) });
+        if (bridgeToolsRes.ok) {
+          const bridgeData = await bridgeToolsRes.json();
+          if (Array.isArray(bridgeData?.tools)) {
+            for (const bTool of bridgeData.tools) {
+              if (!allToolsMap.has(bTool.function.name)) {
+                allToolsMap.set(bTool.function.name, bTool);
+              }
             }
           }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     const rawTools = Array.from(allToolsMap.values()).slice(0, 40);
 
@@ -3537,20 +3540,22 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
           let directResult: string | null = null;
           // If client has local bridge or is in Electron, delegate local execution directly to client
           if (isLocalTool && (hasLocalBridge || isElectron)) {
-            try {
-              const bRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: toolName, args: toolArgs }),
-                signal: AbortSignal.timeout(15000),
-              });
-              if (bRes.ok) {
-                const bData = await bRes.json();
-                if (bData.ok) {
-                  directResult = typeof bData.result === 'string' ? bData.result : JSON.stringify(bData.result);
+            if (!isCloudEnv) {
+              try {
+                const bRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: toolName, args: toolArgs }),
+                  signal: AbortSignal.timeout(2000),
+                });
+                if (bRes.ok) {
+                  const bData = await bRes.json();
+                  if (bData.ok) {
+                    directResult = typeof bData.result === 'string' ? bData.result : JSON.stringify(bData.result);
+                  }
                 }
-              }
-            } catch {}
+              } catch {}
+            }
 
             if (directResult === null) {
               // Yield client tool call to frontend via SSE!
@@ -4089,15 +4094,20 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                 for (const k of Object.keys(fArgs)) {
                   if (typeof fArgs[k] === 'string') fArgs[k] = fArgs[k].trim();
                 }
-                const bRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ name: fName, args: fArgs }),
-                  signal: AbortSignal.timeout(10000),
-                }).catch(() => null);
-                if (bRes && bRes.ok) {
-                  const bData = await bRes.json();
-                  fullText = bData?.result ? (typeof bData.result === 'string' ? bData.result : JSON.stringify(bData.result, null, 2)) : `Executed ${fName}`;
+                if (!isCloudEnv) {
+                  const bRes = await fetch('http://127.0.0.1:48080/api/execute-tool', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: fName, args: fArgs }),
+                    signal: AbortSignal.timeout(2000),
+                  }).catch(() => null);
+                  if (bRes && bRes.ok) {
+                    const bData = await bRes.json();
+                    fullText = bData?.result ? (typeof bData.result === 'string' ? bData.result : JSON.stringify(bData.result, null, 2)) : `Executed ${fName}`;
+                  } else {
+                    const toolRes = await runAgentTool(fName, fArgs, toolContext).catch(() => null);
+                    if (toolRes) fullText = typeof toolRes === 'string' ? toolRes : JSON.stringify(toolRes, null, 2);
+                  }
                 } else {
                   const toolRes = await runAgentTool(fName, fArgs, toolContext).catch(() => null);
                   if (toolRes) fullText = typeof toolRes === 'string' ? toolRes : JSON.stringify(toolRes, null, 2);
