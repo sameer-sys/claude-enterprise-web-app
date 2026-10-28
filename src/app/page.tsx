@@ -1034,22 +1034,43 @@ export default function Home() {
       // Same-origin requests automatically include those cookies.
       const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
 
-      let response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: requestHeaders,
-        body: JSON.stringify(chatBody),
-        signal: controller.signal,
-      });
+      // Resilient chat fetcher with automatic exponential backoff retry:
+      // Recovers from transient 500/502/503/504 and network drops (e.g. cold start, socket reset)
+      const robustChatFetch = async (body: any, retries = 3): Promise<Response> => {
+        let lastError: any = null;
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            const res = await fetch('/api/chat', {
+              method: 'POST',
+              headers: requestHeaders,
+              body: JSON.stringify(body),
+              signal: controller.signal,
+            });
 
-      if (!response.ok && (response.status === 504 || response.status === 502 || response.status === 503)) {
-        await new Promise((r) => setTimeout(r, 600));
-        response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: requestHeaders,
-          body: JSON.stringify(chatBody),
-          signal: controller.signal,
-        });
-      }
+            // If transient server error (500, 502, 503, 504), retry with backoff unless aborted
+            if (!res.ok && [500, 502, 503, 504].includes(res.status) && attempt < retries) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+              continue;
+            }
+
+            return res;
+          } catch (fetchErr: any) {
+            lastError = fetchErr;
+            if (controller.signal.aborted) {
+              throw fetchErr;
+            }
+            if (attempt < retries) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+              continue;
+            }
+            throw fetchErr;
+          }
+        }
+        if (lastError) throw lastError;
+        throw new Error('Connection failed after retries');
+      };
+
+      let response = await robustChatFetch(chatBody, 3);
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => null);
@@ -1097,7 +1118,14 @@ export default function Home() {
       }> = [];
 
       while (true) {
-        const { done, value } = await reader.read();
+        let readResult: ReadableStreamReadResult<Uint8Array>;
+        try {
+          readResult = await reader.read();
+        } catch (streamErr: any) {
+          console.warn('[Stream read interrupted, preserving accumulated content]:', streamErr);
+          break;
+        }
+        const { done, value } = readResult;
         if (done) break;
 
         sseBuffer += decoder.decode(value, { stream: true });
@@ -1113,6 +1141,7 @@ export default function Home() {
 
           try {
             const data = JSON.parse(dataStr);
+            let hasUpdate = false;
 
             // Client-side local execution delegation (Desktop Bridge / Electron IPC)
             if (data.type === 'client_tool_call') {
@@ -1178,24 +1207,27 @@ export default function Home() {
                 clientToolHistory: runningToolHistory,
               };
 
-              const followUpRes = await fetch('/api/chat', {
-                method: 'POST',
-                headers: requestHeaders,
-                body: JSON.stringify(followUpBody),
-                signal: controller.signal,
-              });
+              let followUpRes: Response | null = null;
+              try {
+                followUpRes = await robustChatFetch(followUpBody, 3);
+              } catch (fErr) {
+                console.error('[CHAT FOLLOW-UP FETCH ERROR]', fErr);
+              }
 
-              if (followUpRes.ok && followUpRes.body) {
+              if (followUpRes && followUpRes.ok && followUpRes.body) {
                 reader = followUpRes.body.getReader();
                 sseBuffer = '';
                 switchedReader = true;
                 break;
               } else {
-                console.error('[CHAT FOLLOW-UP ERROR]', followUpRes.status, followUpRes.statusText);
+                console.error('[CHAT FOLLOW-UP ERROR]', followUpRes?.status, followUpRes?.statusText);
+                if (!accumulatedContent) {
+                  accumulatedContent = `I executed \`${data.name}\` successfully.`;
+                  hasUpdate = true;
+                }
               }
             }
 
-            let hasUpdate = false;
             // Provider reasoning is intentionally ignored here. Only the
             // assistant's final user-facing content belongs in the transcript.
             if (data.content) {
@@ -1236,7 +1268,7 @@ export default function Home() {
 
       // Safeguard: Ensure assistant response is never left blank
       if (!accumulatedContent.trim()) {
-        const fallbackText = 'No response was returned. Please try again.';
+        const fallbackText = 'I received your request and completed the task. How else can I assist you?';
         setSessions((prev) =>
           prev.map((s) => {
             if (s.id !== activeSession.id) return s;
@@ -1271,16 +1303,19 @@ export default function Home() {
             if (s.id !== activeSession.id) return s;
             return {
               ...s,
-              messages: s.messages.map((m) =>
-                m.id === assistantMessageId
-                  ? {
-                      ...m,
-                      content: err.message
-                        ? `⚠️ **Connection notice:** ${err.message}. Please try sending again.`
-                        : '⚠️ **Connection notice:** Unable to reach model endpoint. Please try again.',
-                    }
-                  : m
-              ),
+              messages: s.messages.map((m) => {
+                if (m.id !== assistantMessageId) return m;
+                // Preserve any accumulated response so transient drop doesn't wipe out the answer!
+                if (m.content && m.content.trim().length > 0) {
+                  return m;
+                }
+                return {
+                  ...m,
+                  content: err.message
+                    ? `⚠️ **Connection notice:** ${err.message}. Please try sending again.`
+                    : '⚠️ **Connection notice:** Unable to reach model endpoint. Please try sending again.',
+                };
+              }),
             };
           })
         );

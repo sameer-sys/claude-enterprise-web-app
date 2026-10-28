@@ -2370,8 +2370,21 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const requestStartTime = Date.now();
+    let parsedBody: any = {};
+    try {
+      parsedBody = await req.json();
+    } catch {
+      return streamTextDirectly(
+        'Hello! How can I help you today?',
+        'Enterprise Resilience',
+        undefined,
+        false,
+        'Claude Enterprise'
+      );
+    }
+
     const {
-      messages,
+      messages = [],
       modelId = 'boss',
       geminiKey,
       openRouterKey,
@@ -2386,7 +2399,17 @@ export async function POST(req: NextRequest) {
       isElectron = false,
       clientToolResult,
       clientToolHistory,
-    } = await req.json();
+    } = parsedBody || {};
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return streamTextDirectly(
+        'Hello! How can I help you today?',
+        'Enterprise Resilience',
+        undefined,
+        false,
+        'Claude Enterprise'
+      );
+    }
 
     const { cloneNativeConnectors } = await import('@/lib/nativeConnectors');
     const allConnectors: any[] = Array.isArray(connectors) ? [...connectors] : [];
@@ -2999,13 +3022,10 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
     const isAccountQuery = detectIsAccountQuery(lastText, nluRoute.intent);
     const isExplicitRepoWriteRequest =
-      /(?:commit|push\s+to|save\s+to\s+repo|update\s+(?:the|my)\s+(?:codebase|app|repo)|modify\s+(?:the|my)\s+(?:codebase|app|repo)|apply\s+to\s+src|in\s+src\/)/i.test(lastText) &&
-      !/(?:explain|how\s+to|write\s+a\s+script|example|sample|ping|latency)\b/i.test(lastText);
-    const hasPriorWriteContext = messages.slice(-5).some((m: any) => 
-      m.role === 'user' && /(?:move|sidebar|button|change|fix|update|modify|add|create|implement|remove|ui)\b/i.test(m.content || '')
-    );
-    const isWriteIntent = /(?:commit|push|save|update|modify|change|move|add|create|build|implement|fix|refactor|remove|delete|toggle|replace|edit)\b/i.test(lastText) || hasPriorWriteContext;
-    const isWriteTask = (isExplicitRepoWriteRequest || isWriteIntent) && !/(?:explain|how\s+to|difference|meaning|what\s+is|tell\s+me\s+about)\b/i.test(lastText);
+      /(?:commit\s+(?:the|this|my)|push\s+to|save\s+to\s+repo|update\s+(?:the|my)\s+(?:codebase|app|repo)|modify\s+(?:the|my)\s+(?:codebase|app|repo)|apply\s+to\s+src|in\s+src\/)/i.test(lastText) &&
+      !/(?:explain|how\s+to|write\s+a\s+script|example|sample|ping|latency|can\s+you|could\s+you|if\s+i|what\s+if)\b/i.test(lastText);
+    const isWriteIntent = /(?:^|\b)(?:commit\s+(?:this|the|my)|save\s+changes|create\s+file|update\s+file|modify\s+file|delete\s+file|implement\s+feature)\b/i.test(lastText);
+    const isWriteTask = (isExplicitRepoWriteRequest || isWriteIntent) && !/(?:explain|how\s+to|difference|meaning|what\s+is|tell\s+me\s+about|can\s+you|could\s+you|if\s+i)\b/i.test(lastText);
     let lastInspectedRepo = 'sameer-sys/claude-enterprise-desktop-app';
     let lastInspectedPath = '';
     let successfulWriteCalls = 0;
@@ -3436,7 +3456,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
               }
             } else {
               const isDeferralText = /(?:started\s+the\s+task|reply\s+back|working\s+on\s+it|do\s+this\s+in\s+the\s+background|as\s+soon\s+as\s+.*complete|progressively\s+update|will\s+notify|leave\s+it\s+to\s+me)/i.test(contentText);
-              if ((isDeferralText || (isWriteTask && successfulWriteCalls === 0)) && mcpNudges < 3) {
+              if (isDeferralText && mcpNudges < 3) {
                 mcpNudges++;
                 fullMessages.push({
                   role: 'system',
@@ -3633,64 +3653,6 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         });
         forceConnectorTool = Boolean(mcpModeActive);
         continue;
-      }
-    }
-
-    // Autonomous End-to-End Execution: If this was a write/modification task and no commit has succeeded yet,
-    // apply the code modifications directly to the repository and commit them end-to-end!
-    if (isWriteTask && successfulWriteCalls === 0) {
-      const lastAsstWithCode = [...fullMessages].reverse().find((m: any) => m && m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('```'));
-      let codeToCommit = '';
-      if (lastAsstWithCode) {
-        const match = lastAsstWithCode.content.match(/```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]+?)```/);
-        if (match) codeToCommit = match[1].trim();
-      }
-
-      if (!codeToCommit || codeToCommit.length < 15000 || codeToCommit.includes('Preview truncated')) {
-        let fullSource = '';
-        try {
-          const fs = await import('fs');
-          const path = await import('path');
-          const localCandidate = path.join(process.cwd(), 'src', 'app', 'page.tsx');
-          if (fs.existsSync(localCandidate)) {
-            fullSource = fs.readFileSync(localCandidate, 'utf8');
-          }
-        } catch {}
-
-        if (fullSource && fullSource.length > 20000) {
-          codeToCommit = fullSource;
-        } else {
-          const readToolName = 'get_file_contents';
-          const readRes = await runAgentTool(readToolName, { repo: lastInspectedRepo, path: lastInspectedPath }, toolContext);
-          try {
-            const parsed = JSON.parse(readRes);
-            if (parsed.content && parsed.content.length > 20000) codeToCommit = parsed.content;
-          } catch {}
-        }
-
-
-      }
-
-      if (codeToCommit && codeToCommit.length > 25000 && !codeToCommit.includes('Preview truncated')) {
-        const updateToolName = 'create_or_update_file';
-        const commitRes = await runAgentTool(updateToolName, {
-          repo: lastInspectedRepo,
-          path: lastInspectedPath,
-          content: codeToCommit,
-          message: `feat: add toggle sidebar and update ${lastInspectedPath} (end-to-end execution)`
-        }, toolContext);
-        successfulWriteCalls++;
-        let parsedCommit: any = {};
-        try { parsedCommit = JSON.parse(commitRes); } catch {}
-        const commitSha = parsedCommit.commit_sha || 'updated';
-        const commitUrl = parsedCommit.html_url || `https://github.com/sameer-sys/${lastInspectedRepo}/blob/main/${lastInspectedPath}`;
-        return streamTextDirectly(
-          `✅ **End-to-End Task Complete!**\n\n` +
-          `I have updated the repository and committed the sidebar toggle button directly to the codebase:\n\n` +
-          `- **Repository**: [\`${lastInspectedRepo}\`](https://github.com/sameer-sys/${lastInspectedRepo})\n` +
-          `- **File**: \`${lastInspectedPath}\`\n` +
-          `- **Commit SHA**: [\`${commitSha}\`](${commitUrl})\n\n` +
-          `The collapsible sidebar toggle is now fully implemented and committed.`, detectedSkill, toolContext, false, agentName);
       }
     }
 
@@ -4254,8 +4216,8 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
         Connection: 'keep-alive',
         'X-Claude-Skill': 'Enterprise Resilience',
         'X-Claude-Router': 'claude-emergency-shield',
-        'X-Emergency-Error': encodeURIComponent(String(error?.message || error)),
-        'X-Emergency-Stack': encodeURIComponent(String(error?.stack || '').slice(0, 500)),
+        'X-Emergency-Error': encodeURIComponent(String(error?.message || error).slice(0, 200)),
+        'X-Emergency-Stack': encodeURIComponent(String(error?.stack || '').slice(0, 200)),
       },
     });
   }
