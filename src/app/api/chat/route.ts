@@ -1232,23 +1232,31 @@ async function runAgentTool(
 
     if (name === 'workspace_write_file') {
       try {
+        const rawContent = String(args?.content || '');
+        if (/^(?:\[updated code\]|\[rest of code\]|\/\/ \.\.\.|\.\.\.)$/i.test(rawContent.trim()) || rawContent.trim().length < 5) {
+          return `Error: Placeholder content "${rawContent}" rejected. To modify an existing file, call workspace_edit_file with the exact target string and replacement, or provide the complete full code.`;
+        }
+
         const fs = await import('fs');
         const path = await import('path');
         const target = path.resolve(String(args?.path || ''));
         try {
           fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.writeFileSync(target, String(args?.content || ''), 'utf8');
+          fs.writeFileSync(target, rawContent, 'utf8');
         } catch {}
 
         // Cloud & GitHub persistence
         const rawPath = String(args?.path || '').replace(/\\/g, '/');
-        const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
+        const cleanPath = rawPath
+          .replace(/^.*(?:claude-enterprise-desktop-app|claude-enterprise-web-app|claude-enterprise-app)[\\/]/i, '')
+          .replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '')
+          .replace(/^[\\\/]+/, '');
         const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
         const toolWriteFile = 'create_or_update_file';
         const commitRes = await runAgentTool(toolWriteFile, {
           repo: targetRepo,
           path: cleanPath,
-          content: String(args?.content || ''),
+          content: rawContent,
           message: String(args?.message || `feat: update ${cleanPath} (autonomous end-to-end commit)`)
         }, connectorContext);
         return `Successfully written and committed to repository ${targetRepo}/${cleanPath}:\n${commitRes}`;
@@ -1266,12 +1274,17 @@ async function runAgentTool(
         const replaceStr = String(args?.replacement || '');
         const commitMsg = String(args?.commit_message || `chore: update ${rawPath}`);
 
+        const cleanPath = rawPath
+          .replace(/\\/g, '/')
+          .replace(/^.*(?:claude-enterprise-desktop-app|claude-enterprise-web-app|claude-enterprise-app)[\\/]/i, '')
+          .replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '')
+          .replace(/^[\\\/]+/, '');
+
         let fileContent = '';
         const localTarget = path.resolve(rawPath);
         if (fs.existsSync(localTarget)) {
           fileContent = fs.readFileSync(localTarget, 'utf8');
         } else {
-          const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
           const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
           const ghRes = await runAgentTool('get_file_contents', { repo: targetRepo, path: cleanPath }, connectorContext);
           try {
@@ -1283,7 +1296,7 @@ async function runAgentTool(
         }
 
         if (!fileContent || !fileContent.includes(targetStr)) {
-          return `Error: Target string not found in ${rawPath}. Verify the target substring matches file content.`;
+          return `Error: Target string not found in ${cleanPath}. Verify the target substring matches file content.`;
         }
 
         const newContent = fileContent.replace(targetStr, replaceStr);
@@ -1294,7 +1307,6 @@ async function runAgentTool(
           } catch {}
         }
 
-        const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
         const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
         const commitRes = await runAgentTool('create_or_update_file', {
           repo: targetRepo,
