@@ -1295,11 +1295,19 @@ async function runAgentTool(
           }
         }
 
-        if (!fileContent || !fileContent.includes(targetStr)) {
+        const hasCRLF = fileContent.includes('\r\n');
+        const normalizedFile = (fileContent || '').replace(/\r\n/g, '\n');
+        const normalizedTarget = targetStr.replace(/\r\n/g, '\n');
+        const normalizedReplace = replaceStr.replace(/\r\n/g, '\n');
+
+        if (!normalizedFile || !normalizedFile.includes(normalizedTarget)) {
           return `Error: Target string not found in ${cleanPath}. Verify the target substring matches file content.`;
         }
 
-        const newContent = fileContent.replace(targetStr, replaceStr);
+        let newContent = normalizedFile.replace(normalizedTarget, normalizedReplace);
+        if (hasCRLF) {
+          newContent = newContent.replace(/\n/g, '\r\n');
+        }
 
         if (fs.existsSync(localTarget)) {
           try {

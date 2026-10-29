@@ -963,7 +963,7 @@ export async function callRemoteMcpTool(connector: Connector, _exposedToolName: 
               path: contentData.path,
               size: contentData.size,
               html_url: contentData.html_url,
-              content: decoded ? decoded.slice(0, 10000) : '',
+              content: decoded || '',
             });
           }
           return JSON.stringify({ error: `Could not retrieve contents of ${owner}/${repo}/${path} (Status ${ghRes.status})` });
