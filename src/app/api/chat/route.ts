@@ -3182,7 +3182,9 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
     // PRIMARY CONNECTOR PATH:
     // Connector requests use the user's enabled direct MCP plugin(s).
     // Composio is not involved in this path.
-    if (connectorRequest && !hasFocusedRemoteTools) {
+    const hasServerGitHub = Boolean(getGitHubToken());
+    const isWorkspaceOrAgentToolTask = /(?:workspace_edit_file|workspace_write_file|app_self_upgrade|Sidebar\.tsx|src\/|\.tsx|\.ts|\.js|\.json)/i.test(lastText);
+    if (connectorRequest && !hasFocusedRemoteTools && !hasServerGitHub && !isWorkspaceOrAgentToolTask) {
       return streamTextDirectly(
         'No active direct connector is enabled for this request. Open Connectors and enable the plugin you created.', detectedSkill, undefined, false, agentName);
     }
