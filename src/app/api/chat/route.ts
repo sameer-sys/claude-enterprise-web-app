@@ -3792,7 +3792,7 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
           const isCapabilityOnlyTool = /^(?:COMPOSIO_SEARCH_TOOLS|COMPOSIO_SEARCH_SKILLS|COMPOSIO_MANAGE_CONNECTIONS|COMPOSIO_GET_TOOL_SCHEMAS)$/i.test(String(toolName || ''));
           const isRemoteMcpTool = Boolean(toolContext.remoteMcpToolRoutes?.[String(toolName)]) || String(toolName || '').startsWith('REMOTE_MCP_');
-          const isWriteTool = /create_or_update|workspace_write|delete_file|create_repository/i.test(String(toolName || ''));
+          const isWriteTool = /create_or_update|workspace_write|workspace_edit|app_self_upgrade|delete_file|create_repository/i.test(String(toolName || ''));
           if (isWriteTool && !toolFailed) {
             successfulWriteCalls++;
           }
