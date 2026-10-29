@@ -1282,25 +1282,50 @@ async function runAgentTool(
 
         let fileContent = '';
         const localTarget = path.resolve(rawPath);
-        if (fs.existsSync(localTarget)) {
-          fileContent = fs.readFileSync(localTarget, 'utf8');
-        } else {
-          const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
-          const ghRes = await runAgentTool('get_file_contents', { repo: targetRepo, path: cleanPath }, connectorContext);
+        if (fs.existsSync(localTarget) && fs.statSync(localTarget).isFile()) {
           try {
-            const parsed = JSON.parse(ghRes);
-            fileContent = parsed.content || ghRes;
-          } catch {
-            fileContent = ghRes;
+            fileContent = fs.readFileSync(localTarget, 'utf8');
+          } catch {}
+        }
+
+        if (!fileContent) {
+          const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
+          const [owner, repo] = targetRepo.includes('/') ? targetRepo.split('/') : ['sameer-sys', targetRepo];
+          const ghToken = getGitHubToken();
+          try {
+            const rawRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}?ref=main`, {
+              headers: {
+                Authorization: ghToken ? `Bearer ${ghToken}` : '',
+                Accept: 'application/vnd.github.v3+json',
+                'User-Agent': 'claude-enterprise-app',
+              },
+              signal: AbortSignal.timeout(6000),
+            });
+            if (rawRes.ok) {
+              const fileData = await rawRes.json();
+              if (fileData?.content && fileData?.encoding === 'base64') {
+                fileContent = Buffer.from(fileData.content, 'base64').toString('utf8');
+              }
+            }
+          } catch (e: any) {
+            console.warn('[WORKSPACE_EDIT RAW FETCH ERR]', e?.message);
           }
         }
 
         const hasCRLF = fileContent.includes('\r\n');
         const normalizedFile = (fileContent || '').replace(/\r\n/g, '\n');
-        const normalizedTarget = targetStr.replace(/\r\n/g, '\n');
+        let normalizedTarget = targetStr.replace(/\r\n/g, '\n');
         const normalizedReplace = replaceStr.replace(/\r\n/g, '\n');
 
-        if (!normalizedFile || !normalizedFile.includes(normalizedTarget)) {
+        let matchIdx = normalizedFile.indexOf(normalizedTarget);
+        if (matchIdx === -1 && normalizedTarget.trim()) {
+          matchIdx = normalizedFile.indexOf(normalizedTarget.trim());
+          if (matchIdx !== -1) {
+            normalizedTarget = normalizedTarget.trim();
+          }
+        }
+
+        if (matchIdx === -1) {
           return `Error: Target string not found in ${cleanPath}. Verify the target substring matches file content.`;
         }
 
@@ -2725,6 +2750,7 @@ export async function POST(req: NextRequest) {
   3. Validate syntax before saving. Ensure code is complete with zero placeholders.
   4. Communicate with clarity, markdown formatting, tables, and clickable links.
   5. IMMEDIATE TURN COMPLETION (NO DEFERRALS & NO FAKE PROSE): NEVER say "I've started the task", "I will reply back later", or "working on it in the background". You do NOT have a background thread. You MUST call your tools (app_self_upgrade, workspace_edit_file, workspace_read_file, workspace_write_file, shell_command, browser_navigate, create_or_update_file) IMMEDIATELY in THIS turn and return the real completed results. NEVER write fake prose claiming you executed tools or updated files unless the tool actually executed in this turn. If you do not know which file to modify, ask the user directly instead of faking completion.
+  6. REAL REPOSITORY & BROWSER FILE EDITING: When the user asks you to edit code or files, remove options/buttons, or commit changes (even if they say "in the browser", "from GitHub", "from here itself", or "can you edit it from here"): DO NOT attempt to simulate DOM typing into GitHub's web editor via browser clicks, and NEVER claim in prose that you edited the code or completed the action. You MUST call workspace_edit_file or create_or_update_file to execute the real file edit and push a real commit to GitHub! Provide the commit SHA, branch, and modified file link in your final response.
 ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${permanentMemoryText}\n` : ''}=== END WORKSPACE MEMORY ===\n`;
 
     const systemPrompt = `${baseSystemPrompt}${autoSpecialistDirective}${permanentMemoryContext}${developerDirective}${connectorContext}`;
@@ -3208,9 +3234,9 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
 
     const isAccountQuery = detectIsAccountQuery(lastText, nluRoute.intent);
     const isExplicitRepoWriteRequest =
-      /(?:commit\s+(?:the|this|my)|push\s+to|save\s+to\s+repo|update\s+(?:the|my)\s+(?:codebase|app|repo)|modify\s+(?:the|my)\s+(?:codebase|app|repo)|apply\s+to\s+src|in\s+src\/)/i.test(lastText) &&
-      !/(?:explain|how\s+to|write\s+a\s+script|example|sample|ping|latency|can\s+you|could\s+you|if\s+i|what\s+if)\b/i.test(lastText);
-    const isWriteIntent = /(?:^|\b)(?:commit\s+(?:this|the|my)|save\s+changes|create\s+file|update\s+file|modify\s+file|delete\s+file|implement\s+feature)\b/i.test(lastText);
+      /(?:commit\s+(?:the|this|my)|push\s+to|save\s+to\s+repo|update\s+(?:the|my)\s+(?:codebase|app|repo)|modify\s+(?:the|my)\s+(?:codebase|app|repo)|apply\s+to\s+src|in\s+src\/|remove\s+.*(?:agent|button|option)|edit\s+.*(?:browser|github|code|file)|from\s+(?:here|browser)\s+itself)/i.test(lastText) &&
+      !/(?:explain|how\s+to|write\s+a\s+script|example|sample|ping|latency)\b/i.test(lastText);
+    const isWriteIntent = /(?:^|\b)(?:commit|save\s+changes|create\s+file|update\s+file|modify\s+file|delete\s+file|implement\s+feature|remove\s+.*(?:option|button|agent)|edit\s+(?:the\s+)?code)\b/i.test(lastText);
     const isWriteTask = (isExplicitRepoWriteRequest || isWriteIntent) && !/(?:explain|how\s+to|difference|meaning|what\s+is|tell\s+me\s+about|can\s+you|could\s+you|if\s+i)\b/i.test(lastText);
     let lastInspectedRepo = 'sameer-sys/claude-enterprise-desktop-app';
     let lastInspectedPath = '';
@@ -3641,12 +3667,12 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                 );
               }
             } else {
-              const hasFakedToolClaims = /(?:codebase\s+update\s+complete|code\s+update\s+complete|repository\s+update\s+complete|successfully\s+completed.*workspace_write_file|executed.*shell_command|running.*create_or_update_file|begun\s+the\s+process\s+of\s+updating\s+the\s+codebase)/i.test(contentText);
-              if (hasFakedToolClaims && successfulWriteCalls === 0 && currentTurnToolCount === 0 && mcpNudges < 3) {
+              const hasFakedToolClaims = /(?:action\s+completed|codebase\s+update\s+complete|code\s+update\s+complete|repository\s+update\s+complete|successfully\s+completed|i('?ve| have)\s+(?:edited|updated|removed|modified|committed|pushed)|changes\s+have\s+been\s+(?:made|applied|saved|committed)|done\b|finished\b|running.*create_or_update_file|begun\s+the\s+process)/i.test(contentText);
+              if ((hasFakedToolClaims || isWriteTask) && successfulWriteCalls === 0 && currentTurnToolCount === 0 && mcpNudges < 3) {
                 mcpNudges++;
                 fullMessages.push({
                   role: 'system',
-                  content: 'CRITICAL ERROR: You generated text claiming you updated the codebase, but NO actual tool call was executed. If the user asked you to upgrade, update code, or install a skill, you MUST call app_self_upgrade, workspace_edit_file, or create_or_update_file with real parameters now. If you need clarification on what file to edit, ask the user directly. Never simulate tool completion in prose.'
+                  content: 'CRITICAL ERROR: The user instructed you to modify code, remove an element, or update the repository, but NO actual file write or commit was executed! You MUST call workspace_edit_file or create_or_update_file right now in this turn to perform the real change and commit to GitHub. Never simulate completion in prose.'
                 });
                 continue;
               }
