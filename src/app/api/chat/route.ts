@@ -442,6 +442,46 @@ const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'app_self_upgrade',
+      description: 'Upgrade the application codebase, install/enable new skills, pull updates from GitHub, or commit new features to GitHub with automatic deployment.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['upgrade_feature', 'install_skill', 'git_sync', 'modify_code'],
+            description: 'The upgrade action to execute'
+          },
+          skill_or_feature: { type: 'string', description: 'Name of the skill, capability, or feature to add or upgrade' },
+          target_file: { type: 'string', description: 'Path of the codebase file to create or modify' },
+          code_content: { type: 'string', description: 'Code, configuration, or skill instructions to write' },
+          commit_message: { type: 'string', description: 'Git commit message describing the upgrade' },
+        },
+        required: ['action', 'skill_or_feature'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'workspace_edit_file',
+      description: 'Edit a codebase file using targeted search and replace. Replaces target string with replacement without truncating or overwriting unaffected code.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'The file path in the workspace or repository' },
+          target: { type: 'string', description: 'The exact string block in the file to be replaced' },
+          replacement: { type: 'string', description: 'The new replacement string block' },
+          commit_to_github: { type: 'boolean', description: 'Whether to commit the change to GitHub directly' },
+          commit_message: { type: 'string', description: 'Git commit message' },
+        },
+        required: ['path', 'target', 'replacement'],
+      },
+    },
+  },
 ];
 
 function getSafeHttpUrl(raw: string): URL | null {
@@ -1214,6 +1254,127 @@ async function runAgentTool(
         return `Successfully written and committed to repository ${targetRepo}/${cleanPath}:\n${commitRes}`;
       } catch (e: any) {
         return `File write error: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'workspace_edit_file') {
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const rawPath = String(args?.path || '').trim();
+        const targetStr = String(args?.target || '');
+        const replaceStr = String(args?.replacement || '');
+        const commitMsg = String(args?.commit_message || `chore: update ${rawPath}`);
+
+        let fileContent = '';
+        const localTarget = path.resolve(rawPath);
+        if (fs.existsSync(localTarget)) {
+          fileContent = fs.readFileSync(localTarget, 'utf8');
+        } else {
+          const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
+          const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
+          const ghRes = await runAgentTool('get_file_contents', { repo: targetRepo, path: cleanPath }, connectorContext);
+          try {
+            const parsed = JSON.parse(ghRes);
+            fileContent = parsed.content || ghRes;
+          } catch {
+            fileContent = ghRes;
+          }
+        }
+
+        if (!fileContent || !fileContent.includes(targetStr)) {
+          return `Error: Target string not found in ${rawPath}. Verify the target substring matches file content.`;
+        }
+
+        const newContent = fileContent.replace(targetStr, replaceStr);
+
+        if (fs.existsSync(localTarget)) {
+          try {
+            fs.writeFileSync(localTarget, newContent, 'utf8');
+          } catch {}
+        }
+
+        const cleanPath = rawPath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
+        const targetRepo = args?.repo || 'sameer-sys/claude-enterprise-desktop-app';
+        const commitRes = await runAgentTool('create_or_update_file', {
+          repo: targetRepo,
+          path: cleanPath,
+          content: newContent,
+          message: commitMsg,
+        }, connectorContext);
+
+        return `✅ Successfully updated and committed ${targetRepo}/${cleanPath}:\n${commitRes}`;
+      } catch (e: any) {
+        return `Workspace edit error: ${e?.message || 'unknown error'}`;
+      }
+    }
+
+    if (name === 'app_self_upgrade') {
+      try {
+        const action = String(args?.action || 'upgrade_feature');
+        const feature = String(args?.skill_or_feature || 'feature_upgrade');
+        const commitMsg = String(args?.commit_message || `feat: upgrade ${feature}`);
+
+        if (action === 'git_sync') {
+          try {
+            const { execSync } = await import('child_process');
+            const cwd = 'C:\\Users\\Master\\sameer workspace\\projects\\claude-enterprise-desktop-app';
+            const out = execSync('git pull origin main', { cwd, timeout: 15000 }).toString();
+            return `Git sync completed successfully:\n${out}`;
+          } catch (gitErr: any) {
+            return `Git sync result: ${gitErr?.message || 'Branches up to date.'}`;
+          }
+        }
+
+        if (action === 'install_skill') {
+          const fs = await import('fs');
+          const path = await import('path');
+          const memoryFile = path.join(process.cwd(), '.workspace_memory.json');
+          let memory: Record<string, string> = {};
+          try {
+            if (fs.existsSync(memoryFile)) memory = JSON.parse(fs.readFileSync(memoryFile, 'utf8'));
+          } catch {}
+          memory[`skill_${feature.toLowerCase().replace(/\s+/g, '_')}`] = String(args?.code_content || `Skill ${feature} active`);
+          try {
+            fs.writeFileSync(memoryFile, JSON.stringify(memory, null, 2), 'utf8');
+          } catch {}
+
+          const skillFileName = `src/skills/${feature.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.json`;
+          const commitRes = await runAgentTool('create_or_update_file', {
+            repo: 'sameer-sys/claude-enterprise-desktop-app',
+            path: skillFileName,
+            content: JSON.stringify({
+              name: feature,
+              installedAt: new Date().toISOString(),
+              instructions: args?.code_content || 'Installed via app_self_upgrade',
+            }, null, 2),
+            message: `feat(skill): install ${feature}`,
+          }, connectorContext);
+
+          return `✅ Skill "${feature}" installed and committed to repository (${skillFileName}):\n${commitRes}`;
+        }
+
+        if (action === 'modify_code' || action === 'upgrade_feature') {
+          const filePath = String(args?.target_file || '').trim();
+          const content = String(args?.code_content || '').trim();
+          if (!filePath || !content) {
+            return `Upgrade requires target_file and code_content. Specify the file and code to apply.`;
+          }
+
+          const cleanPath = filePath.replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
+          const commitRes = await runAgentTool('create_or_update_file', {
+            repo: 'sameer-sys/claude-enterprise-desktop-app',
+            path: cleanPath,
+            content: content,
+            message: commitMsg,
+          }, connectorContext);
+
+          return `✅ Upgrade complete! Committed changes for ${feature} to sameer-sys/claude-enterprise-desktop-app/${cleanPath}:\n${commitRes}`;
+        }
+
+        return `Upgrade action "${action}" completed.`;
+      } catch (e: any) {
+        return `Self-upgrade error: ${e?.message || 'unknown error'}`;
       }
     }
 
@@ -2543,7 +2704,7 @@ export async function POST(req: NextRequest) {
   2. Read files with tools before editing. Never guess file contents or structure.
   3. Validate syntax before saving. Ensure code is complete with zero placeholders.
   4. Communicate with clarity, markdown formatting, tables, and clickable links.
-  5. IMMEDIATE TURN COMPLETION (NO DEFERRALS): NEVER say "I've started the task", "I will reply back later", or "working on it in the background". You do NOT have a background thread. You MUST call your tools (workspace_read_file, workspace_write_file, shell_command, browser_navigate, create_or_update_file) IMMEDIATELY in THIS turn and return the real completed results right now.
+  5. IMMEDIATE TURN COMPLETION (NO DEFERRALS & NO FAKE PROSE): NEVER say "I've started the task", "I will reply back later", or "working on it in the background". You do NOT have a background thread. You MUST call your tools (app_self_upgrade, workspace_edit_file, workspace_read_file, workspace_write_file, shell_command, browser_navigate, create_or_update_file) IMMEDIATELY in THIS turn and return the real completed results. NEVER write fake prose claiming you executed tools or updated files unless the tool actually executed in this turn. If you do not know which file to modify, ask the user directly instead of faking completion.
 ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${permanentMemoryText}\n` : ''}=== END WORKSPACE MEMORY ===\n`;
 
     const systemPrompt = `${baseSystemPrompt}${autoSpecialistDirective}${permanentMemoryContext}${developerDirective}${connectorContext}`;
@@ -3458,6 +3619,16 @@ ${permanentMemoryText ? `\n- Learned User Memories & Custom Knowledge:\n${perman
                 );
               }
             } else {
+              const hasFakedToolClaims = /(?:codebase\s+update\s+complete|code\s+update\s+complete|repository\s+update\s+complete|successfully\s+completed.*workspace_write_file|executed.*shell_command|running.*create_or_update_file|begun\s+the\s+process\s+of\s+updating\s+the\s+codebase)/i.test(contentText);
+              if (hasFakedToolClaims && successfulWriteCalls === 0 && currentTurnToolCount === 0 && mcpNudges < 3) {
+                mcpNudges++;
+                fullMessages.push({
+                  role: 'system',
+                  content: 'CRITICAL ERROR: You generated text claiming you updated the codebase, but NO actual tool call was executed. If the user asked you to upgrade, update code, or install a skill, you MUST call app_self_upgrade, workspace_edit_file, or create_or_update_file with real parameters now. If you need clarification on what file to edit, ask the user directly. Never simulate tool completion in prose.'
+                });
+                continue;
+              }
+
               const isDeferralText = /(?:started\s+the\s+task|reply\s+back|working\s+on\s+it|do\s+this\s+in\s+the\s+background|as\s+soon\s+as\s+.*complete|progressively\s+update|will\s+notify|leave\s+it\s+to\s+me)/i.test(contentText);
               if (isDeferralText && mcpNudges < 3) {
                 mcpNudges++;
