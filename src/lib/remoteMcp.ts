@@ -815,8 +815,8 @@ export async function callRemoteMcpTool(connector: Connector, _exposedToolName: 
     if (cleanToolName === 'create_or_update_file') {
       try {
         const { owner, repo } = parseOwnerRepo(args);
-        let path = String(args.path || '').trim();
-        if (path.startsWith('/')) path = path.slice(1);
+        let path = String(args.path || '').trim().replace(/\\/g, '/');
+        path = path.replace(/^.*(?:claude-enterprise-desktop-app|claude-enterprise-web-app|claude-enterprise-app)[\/]/i, '').replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
         const content = String(args.content || '');
         const message = String(args.message || `Update ${path}`);
         const branch = String(args.branch || 'main');
@@ -864,8 +864,8 @@ export async function callRemoteMcpTool(connector: Connector, _exposedToolName: 
     if (cleanToolName === 'delete_file') {
       try {
         const { owner, repo } = parseOwnerRepo(args);
-        let path = String(args.path || '').trim();
-        if (path.startsWith('/')) path = path.slice(1);
+        let path = String(args.path || '').trim().replace(/\\/g, '/');
+        path = path.replace(/^.*(?:claude-enterprise-desktop-app|claude-enterprise-web-app|claude-enterprise-app)[\/]/i, '').replace(/^[a-zA-Z]:\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\//, '').replace(/^[\\\/]+/, '');
         const message = String(args.message || `Delete ${path}`);
         let sha: string | undefined = args.sha;
         if (!sha) {
